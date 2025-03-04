@@ -1,0 +1,179 @@
+/* App.css */
+
+/* 整体背景：渐变黑色并使用未来感字体（请自行引入 Orbitron 字体） */
+body {
+  margin: 0;
+  background: linear-gradient(135deg, #000, #111);
+  font-family: 'Orbitron', sans-serif;
+}
+
+/* 通用容器 */
+.container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #000, #111);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  color: #39FF14; /* 霓虹绿 */
+  padding: 1rem;
+  text-shadow: 0 0 10px #39FF14, 0 0 20px #39FF14;
+}
+
+/* 标题 */
+.title {
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin-bottom: 1.5rem;
+  letter-spacing: 0.1em;
+  color: #FF00FF;
+  text-shadow: 0 0 10px #FF00FF, 0 0 20px #FF00FF;
+}
+
+/* 信息提示 */
+.message {
+  margin-bottom: 1rem;
+  font-size: 1.2rem;
+}
+
+/* 按钮样式 */
+.btn {
+  background: transparent;
+  border: 2px solid #FF69B4;
+  color: #FF69B4;
+  font-weight: bold;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-shadow: 0 0 5px #FF69B4;
+}
+.btn:hover {
+  background: #FF69B4;
+  color: #000;
+  box-shadow: 0 0 10px #FF69B4, 0 0 20px #FF69B4;
+}
+
+/* 下拉框样式 */
+.select {
+  background-color: transparent;
+  border: 2px solid #39FF14;
+  color: #39FF14;
+  padding: 0.5rem;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+  text-align: center;
+  width: 8rem;
+  font-size: 1rem;
+  outline: none;
+  text-shadow: 0 0 5px #39FF14;
+}
+
+/* 测光页面整体容器 */
+.meter-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #000, #111);
+  display: flex;
+  flex-direction: column;
+  color: #39FF14;
+  padding: 1rem;
+}
+
+/* 测光页面头部 */
+.meter-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 0;
+  border-bottom: 1px solid #39FF14;
+}
+.header-title {
+  font-size: 1.5rem;
+  font-weight: bold;
+  text-shadow: 0 0 10px #FF00FF, 0 0 20px #FF00FF;
+}
+
+/* 测光页面主区域 */
+.meter-main {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 视频预览样式优化，避免视频变形 */
+.video-preview {
+  width: 100%;
+  height: 60vh;
+  object-fit: cover;
+  background: black;
+  margin-bottom: 1rem;
+  border: 2px solid #39FF14;
+  box-shadow: 0 0 10px #39FF14, 0 0 20px #39FF14;
+}
+
+/* 不支持 aspect-ratio 的备用方案 */
+@supports not (aspect-ratio: 16 / 9) {
+  .video-preview {
+    width: 100%;
+    position: relative;
+    padding-top: 56.25%;
+  }
+  .video-preview video {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+/* 隐藏 canvas */
+.hidden-canvas {
+  display: none;
+}
+
+/* 曝光信息显示区域 */
+.exposure-info {
+  background: rgba(0, 0, 0, 0.8);
+  padding: 1rem;
+  border-radius: 4px;
+  text-align: center;
+  width: 100%;
+  max-width: 400px;
+  border: 2px solid #39FF14;
+  box-shadow: 0 0 10px #39FF14, 0 0 20px #39FF14;
+  margin-top: 1rem;
+}
+
+/* 直方图 canvas 样式 */
+.histogram-canvas {
+  width: 100%;
+  max-width: 400px;
+  margin-top: 1rem;
+  border: 2px solid #39FF14;
+  background: rgba(0, 0, 0, 0.8);
+  box-shadow: 0 0 10px #39FF14, 0 0 20px #39FF14;
+}
+
+/* 备注样式 */
+.note {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #aaa;
+}
+
+/* 小按钮 */
+.btn.small {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+/* 错误提示样式 */
+.error {
+  color: red;
+  font-size: 1.5rem;
+  text-align: center;
+  margin-top: 2rem;
+}
