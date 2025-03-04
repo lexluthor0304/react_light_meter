@@ -207,4 +207,4 @@ Edit **public/manifest.json** to change:
 
 ### 🎯 Credits
 
-Built with ❤️ by [Your Name](https://github.com/lexluthor0304)
+Built with ❤️ by [Lexluthor0304](https://github.com/lexluthor0304)
