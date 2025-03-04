@@ -120,16 +120,15 @@ function computeCenterBrightness(video, canvas) {
  * effectiveEV = measuredEV + 曝光补偿 + log₂(ISO/100) - filmAdjustment
  *
  * 这里引入了 filmAdjustment（胶片补偿），因为胶片相机通常会低于标称 ISO 进行拍摄，
- * 以便获得更宽的光圈和更柔和的阴影。我们这里默认 filmAdjustment 为 1 EV。
+ * 以便获得更宽的光圈和更柔和的阴影。我们这里默认 filmAdjustment 为 5 EV。
  *
  * 利用预生成 EV 表寻找最接近 effectiveEV 的快门/光圈组合，
  * 当 EV 差值相同时优先选择快门速度更快的方案。
  */
 function calculateExposure(avgBrightness, iso, compensation) {
-  const filmAdjustment = 1; // 胶片相机补偿，单位 EV（1 EV = 1 stop）
+  const filmAdjustment = 5; // 胶片相机补偿，单位 EV（1 EV = 1 stop）
   // 防止全黑导致零值错误
   const avg = avgBrightness || 1;
-  // 调整基准，从 15 改为 12
   const measuredEV = 12 + Math.log2(avg / 118);
   const effectiveEV = measuredEV + compensation + Math.log2(iso / 100) - filmAdjustment;
 
@@ -203,6 +202,7 @@ function App() {
   const [compensation, setCompensation] = useState(0);
   const [exposure, setExposure] = useState({ shutterSpeed: 0, aperture: 0, effectiveEV: 0 });
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const histCanvasRef = useRef(null);
@@ -246,8 +246,14 @@ function App() {
       intervalRef.current = setInterval(() => {
         if (videoRef.current && canvasRef.current && histCanvasRef.current) {
           const avgBrightness = computeCenterBrightness(videoRef.current, canvasRef.current);
-          const exp = calculateExposure(avgBrightness, iso, compensation);
-          setExposure(exp);
+          // 判断全黑或全白的情况
+          if (avgBrightness < 5 || avgBrightness > 250) {
+            setError('Too dark or too bright');
+          } else {
+            setError('');
+            const exp = calculateExposure(avgBrightness, iso, compensation);
+            setExposure(exp);
+          }
           drawHistogram(videoRef.current, histCanvasRef.current, compensation);
         }
       }, 1000);
@@ -343,28 +349,34 @@ function App() {
           <video ref={videoRef} className="video-preview" playsInline muted />
           {/* 隐藏 canvas 用于测光计算 */}
           <canvas ref={canvasRef} className="hidden-canvas" />
-          {/* 曝光信息显示 */}
+          {/* 曝光信息显示或错误提示 */}
           <div className="exposure-info">
-            <p>
-              Recommended Shutter Speed:{' '}
-              {exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
-                ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
-                : `${exposure.shutterSpeed.toFixed(1).replace(/\.0$/, '')} sec`}
-            </p>
-            <p>
-              Recommended Aperture:{' '}
-              {exposure.aperture
-                ? `f/${
-                    exposure.aperture % 1 === 0
-                      ? exposure.aperture.toFixed(0)
-                      : exposure.aperture.toFixed(1)
-                  }`
-                : '--'}
-            </p>
-            <p>Current EV: {exposure.effectiveEV.toFixed(1)}</p>
-            <p className="note">
-              (Using center-weighted metering, ISO = {iso}, EV Compensation = {compensation})
-            </p>
+            {error ? (
+              <p className="error-message">{error}</p>
+            ) : (
+              <>
+                <p>
+                  Recommended Shutter Speed:{' '}
+                  {exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
+                    ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
+                    : `${exposure.shutterSpeed.toFixed(1).replace(/\.0$/, '')} sec`}
+                </p>
+                <p>
+                  Recommended Aperture:{' '}
+                  {exposure.aperture
+                    ? `f/${
+                        exposure.aperture % 1 === 0
+                          ? exposure.aperture.toFixed(0)
+                          : exposure.aperture.toFixed(1)
+                      }`
+                    : '--'}
+                </p>
+                <p>Current EV: {exposure.effectiveEV.toFixed(1)}</p>
+                <p className="note">
+                  (Using center-weighted metering, ISO = {iso}, EV Compensation = {compensation})
+                </p>
+              </>
+            )}
           </div>
           {/* 直方图显示 */}
           <canvas ref={histCanvasRef} className="histogram-canvas" />
