@@ -117,16 +117,21 @@ function computeCenterBrightness(video, canvas) {
  * 曝光计算算法：基于 EV 模型。
  * 假设当 avgBrightness 为 118 时，ISO 100 下 EV 为 12（由此调整基准）。
  * measuredEV = 12 + log₂(avgBrightness/118)
- * effectiveEV = measuredEV + 曝光补偿 + log₂(ISO/100)
+ * effectiveEV = measuredEV + 曝光补偿 + log₂(ISO/100) - filmAdjustment
+ *
+ * 这里引入了 filmAdjustment（胶片补偿），因为胶片相机通常会低于标称 ISO 进行拍摄，
+ * 以便获得更宽的光圈和更柔和的阴影。我们这里默认 filmAdjustment 为 1 EV。
+ *
  * 利用预生成 EV 表寻找最接近 effectiveEV 的快门/光圈组合，
  * 当 EV 差值相同时优先选择快门速度更快的方案。
  */
 function calculateExposure(avgBrightness, iso, compensation) {
+  const filmAdjustment = 1; // 胶片相机补偿，单位 EV（1 EV = 1 stop）
   // 防止全黑导致零值错误
   const avg = avgBrightness || 1;
   // 调整基准，从 15 改为 12
   const measuredEV = 12 + Math.log2(avg / 118);
-  const effectiveEV = measuredEV + compensation + Math.log2(iso / 100);
+  const effectiveEV = measuredEV + compensation + Math.log2(iso / 100) - filmAdjustment;
 
   // 遍历所有候选组合，选择 EV 差值最小的方案
   let bestCandidate = null;
