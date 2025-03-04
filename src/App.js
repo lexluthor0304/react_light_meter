@@ -113,15 +113,15 @@ function computeCenterBrightness(video, canvas) {
 /**
  * 曝光计算算法：基于 EV 模型。
  * 当 avgBrightness 为 118 时，假定 ISO 100 下 EV 为 15，
- * measuredEV = 15 - log₂(avgBrightness/118)
+ * measuredEV = 15 + log₂(avgBrightness/118)
  * effectiveEV = measuredEV + 曝光补偿 + log₂(ISO/100)
  * 利用预生成 EV 表寻找最接近 effectiveEV 的快门/光圈组合，
- * 当 EV 差值相同时优先选择快门速度更快的方案（加入 epsilon 浮点比较）。
+ * 当 EV 差值相同时优先选择快门速度更快的方案。
  */
 function calculateExposure(avgBrightness, iso, compensation) {
   // 防止全黑导致的零值错误
   const avg = avgBrightness || 1;
-  const measuredEV = 15 - Math.log2(avg / 118);
+  const measuredEV = 15 + Math.log2(avg / 118);
   const effectiveEV = measuredEV + compensation + Math.log2(iso / 100);
 
   let bestCandidate = shutterApertureEV[0];
@@ -131,7 +131,7 @@ function calculateExposure(avgBrightness, iso, compensation) {
     const diff = Math.abs(candidate.ev - effectiveEV);
     if (
       diff < bestDiff - epsilon ||
-      (Math.abs(diff - bestDiff) < epsilon && candidate.shutter > bestCandidate.shutter)
+      (Math.abs(diff - bestDiff) < epsilon && candidate.shutter < bestCandidate.shutter)
     ) {
       bestDiff = diff;
       bestCandidate = candidate;
