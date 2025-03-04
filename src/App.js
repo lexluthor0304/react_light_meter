@@ -52,7 +52,9 @@ const standardShutterSpeeds = [
 ];
 const standardApertures = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22];
 
-// 预生成 EV 表，计算所有组合的 EV 值，并按快门速度从快到慢排序
+// 预生成 EV 表，计算所有组合的 EV 值
+// EV 计算公式：log₂((光圈²) / 快门速度)
+// 此处排序不是必需的，因为后面会遍历全部候选组合
 const shutterApertureEV = standardShutterSpeeds.flatMap((s) =>
   standardApertures.map((a) => ({
     shutter: s,
@@ -63,7 +65,8 @@ const shutterApertureEV = standardShutterSpeeds.flatMap((s) =>
 
 /**
  * 计算视频帧中心区域的加权平均亮度。
- * 采用 sRGB → 线性转换（Gamma 校正）、Rec.709 权重，并用高斯径向权重强调中心像素。
+ * 采用 sRGB → 线性转换（Gamma 校正，Gamma = 2.2）、Rec.709 权重，
+ * 并用高斯径向权重强调中心像素。
  */
 function computeCenterBrightness(video, canvas) {
   const ctx = canvas.getContext('2d');
@@ -112,26 +115,29 @@ function computeCenterBrightness(video, canvas) {
 
 /**
  * 曝光计算算法：基于 EV 模型。
- * 当 avgBrightness 为 118 时，假定 ISO 100 下 EV 为 15，
- * measuredEV = 15 + log₂(avgBrightness/118)
+ * 假设当 avgBrightness 为 118 时，ISO 100 下 EV 为 12（由此调整基准）。
+ * measuredEV = 12 + log₂(avgBrightness/118)
  * effectiveEV = measuredEV + 曝光补偿 + log₂(ISO/100)
  * 利用预生成 EV 表寻找最接近 effectiveEV 的快门/光圈组合，
  * 当 EV 差值相同时优先选择快门速度更快的方案。
  */
 function calculateExposure(avgBrightness, iso, compensation) {
-  // 防止全黑导致的零值错误
+  // 防止全黑导致零值错误
   const avg = avgBrightness || 1;
-  const measuredEV = 15 + Math.log2(avg / 118);
+  // 调整基准，从 15 改为 12
+  const measuredEV = 12 + Math.log2(avg / 118);
   const effectiveEV = measuredEV + compensation + Math.log2(iso / 100);
 
-  let bestCandidate = shutterApertureEV[0];
-  let bestDiff = Math.abs(bestCandidate.ev - effectiveEV);
+  // 遍历所有候选组合，选择 EV 差值最小的方案
+  let bestCandidate = null;
+  let bestDiff = Infinity;
   const epsilon = 1e-6;
   for (const candidate of shutterApertureEV) {
     const diff = Math.abs(candidate.ev - effectiveEV);
     if (
       diff < bestDiff - epsilon ||
-      (Math.abs(diff - bestDiff) < epsilon && candidate.shutter < bestCandidate.shutter)
+      (Math.abs(diff - bestDiff) < epsilon &&
+        candidate.shutter < (bestCandidate ? bestCandidate.shutter : Infinity))
     ) {
       bestDiff = diff;
       bestCandidate = candidate;
