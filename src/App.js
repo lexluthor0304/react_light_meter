@@ -116,7 +116,8 @@ function computeBrightness(video, canvas, meteringMode) {
     const g = data[i + 1];
     const b = data[i + 2];
     // 直接计算感知亮度（基于 sRGB 推荐公式，无 Gamma 变换）
-    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    // const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     total += luminance;
     count++;
   }
