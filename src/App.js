@@ -274,8 +274,8 @@ function drawHistogram(video, canvas, compensation) {
     }
   }
   // 新直方图尺寸：宽 512，高 200
-  const histWidth = 512;
-  const histHeight = 200;
+  const histWidth = 320;
+  const histHeight = 150;
   canvas.width = histWidth;
   canvas.height = histHeight;
   const maxCount = Math.max(...histogram) || 1;
@@ -304,7 +304,7 @@ function drawHistogram(video, canvas, compensation) {
       ctx.lineTo(x, histHeight);
       ctx.stroke();
       // 计算文本宽度，调整位置确保显示完全
-      const text = `Zone ${zone}`;
+      const text = `Z${zone}`;
       const textWidth = ctx.measureText(text).width;
       let textX = x + 2;
       if (textX + textWidth > histWidth) {
