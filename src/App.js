@@ -684,6 +684,9 @@ function App() {
               )}
             </div>
           </main>
+          <footer className="app-footer">
+          <p>© {new Date().getFullYear()} Film Camera Light Meter. tokugai.com All rights reserved.</p>
+          </footer>
         </div>
       </>
     );
