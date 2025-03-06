@@ -273,44 +273,62 @@ function drawHistogram(video, canvas, compensation) {
       histogram[adjustedBrightness]++;
     }
   }
-  // 新直方图尺寸：宽 512，高 200
+  // 此处直方图尺寸调整为 320×150（如有需要可调整）
   const histWidth = 320;
   const histHeight = 150;
   canvas.width = histWidth;
   canvas.height = histHeight;
   const maxCount = Math.max(...histogram) || 1;
   const scaleX = histWidth / 256; // 每个直方图 bin 的宽度缩放因子
+  
   requestAnimationFrame(() => {
     ctx.clearRect(0, 0, histWidth, histHeight);
+    // 绘制直方图
     for (let i = 0; i < 256; i++) {
       const binHeight = (histogram[i] / maxCount) * histHeight;
       ctx.fillStyle = i > 245 ? 'red' : i < 15 ? 'blue' : 'green';
       ctx.fillRect(i * scaleX, histHeight - binHeight, scaleX, binHeight);
     }
-    // 标注 Zone III 到 Zone VII
+    
+    // 计算 Zone 标签位置 —— 利用 Zone 系统中每个 Zone 的区域
+    // 为了确定各 Zone 的区域，我们先计算 Zone 2 至 Zone 7 的“边界”：
+    // 边界计算公式：referenceGray * 2^(zone - 5)
+    // 注意：直方图只显示 0~255 的亮度，超出部分统一用 255 表示
+    const zoneNumbersFull = [2, 3, 4, 5, 6, 7];
+    const boundaries = zoneNumbersFull.map(zone => {
+      let b = referenceGray * Math.pow(2, zone - 5);
+      return b > 255 ? 255 : b;
+    });
+    // 将亮度值转换为画布坐标
+    const xBoundaries = boundaries.map(b => b * scaleX);
+    
+    // 可选：绘制 Zone 3~7 的分界线（即 xBoundaries[1] 至 xBoundaries[5]）
     ctx.save();
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 1;
-    ctx.font = '14px sans-serif'; // 调大字体便于阅读
-    const zones = [3, 4, 5, 6, 7];
-    zones.forEach(zone => {
-      // 根据 Zone System 计算对应亮度值
-      const brightnessForZone = referenceGray * Math.pow(2, zone - 5);
-      // 乘以缩放因子转换到新坐标系
-      let x = brightnessForZone * scaleX;
-      if (x > histWidth) x = histWidth;
+    for (let i = 1; i < xBoundaries.length; i++) {
+      let x = xBoundaries[i];
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, histHeight);
       ctx.stroke();
-      // 计算文本宽度，调整位置确保显示完全
-      const text = `Z${zone}`;
-      const textWidth = ctx.measureText(text).width;
-      let textX = x + 2;
-      if (textX + textWidth > histWidth) {
-        textX = x - textWidth - 2;
-      }
-      ctx.fillText(text, textX, 20);
+    }
+    
+    // 现在为 Zone 3 至 Zone 7 计算标签位置
+    // 对于 Zone i（i=3~7），区域为 [xBoundaries[i-2], xBoundaries[i-1]]
+    ctx.fillStyle = 'black';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const zoneLabels = [3, 4, 5, 6, 7];
+    zoneLabels.forEach((zone, index) => {
+      // index 0 对应 Zone 3，其区域为 [xBoundaries[0], xBoundaries[1]]
+      const left = xBoundaries[index];
+      // 对于最后一个 Zone（Zone 7），右边界以画布右侧为准
+      const right = index < xBoundaries.length - 1 ? xBoundaries[index + 1] : histWidth;
+      const midX = (left + right) / 2;
+      // 将 Zone 标签放置在区域内靠上位置（例如 y=12）
+      ctx.fillText(`Z${zone}`, midX, 12);
     });
     ctx.restore();
   });
