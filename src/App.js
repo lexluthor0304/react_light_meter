@@ -29,16 +29,14 @@ function DocumentMetadata() {
         content="Accurate exposure metering for film cameras using manual settings, center-weighted analysis and real-time histogram."
       />
       <meta property="og:type" content="website" />
-      <meta property="og:url" content="http://yourwebsite.com" />
-      <meta property="og:image" content="http://yourwebsite.com/og-image.jpg" />
+      <meta property="og:url" content="http://tokugai.com" />
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content="Film Camera Light Meter" />
       <meta
         name="twitter:description"
         content="Accurate exposure metering for film cameras using manual settings, center-weighted analysis and real-time histogram."
       />
-      <meta name="twitter:image" content="http://yourwebsite.com/twitter-image.jpg" />
-      <link rel="canonical" href="http://yourwebsite.com" />
+      <link rel="canonical" href="http://tokugai.com" />
       {/* 苹果设备及移动端优化 */}
       <meta name="apple-mobile-web-app-capable" content="yes" />
       <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
