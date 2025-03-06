@@ -283,6 +283,25 @@ function drawHistogram(video, canvas, compensation) {
       ctx.fillStyle = i > 245 ? 'red' : i < 15 ? 'blue' : 'green';
       ctx.fillRect(i, 100 - binHeight, 1, binHeight);
     }
+    // 标注 Zone III 到 Zone VII
+    ctx.save();
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    ctx.font = '10px sans-serif';
+    const zones = [3, 4, 5, 6, 7];
+    zones.forEach(zone => {
+      // 根据 Zone System 计算对应亮度值
+      const brightnessForZone = referenceGray * Math.pow(2, zone - 5);
+      // 由于 canvas 宽度固定为 256，超出部分按右侧边界显示
+      const x = brightnessForZone > canvas.width ? canvas.width : brightnessForZone;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvas.height);
+      ctx.stroke();
+      // 在直线旁边标注区号（例如：“区3”）
+      ctx.fillText(`Zone${zone}`, x + 2, 10);
+    });
+    ctx.restore();
   });
 }
 
