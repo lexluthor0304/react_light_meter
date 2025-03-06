@@ -1,8 +1,8 @@
 // App.js
 import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
-import GoogleTag from "./GoogleTag";
-import GoogleAnalytics from "./GoogleAnalytics";
+import GoogleTag from "./GoogleTag.js";
+import GoogleAnalytics from "./GoogleAnalytics.js";
 
 // 预先创建临时 canvas，用于直方图绘制，避免频繁创建销毁
 const tempCanvas = document.createElement('canvas');
