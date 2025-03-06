@@ -571,6 +571,10 @@ function App() {
     } else if (evDifference >= 1) {
       exposureWarningColor = 'orange';
     }
+  
+    // 根据测光模式，决定圆形大小
+    const circleSize = meteringMode === 'spot' ? '5%' : '20%';
+  
     return (
       <>
         <GoogleAnalytics trackingId="G-1ZZ5X14QXX" />
@@ -585,9 +589,25 @@ function App() {
             <div></div>
           </header>
           <main className="meter-main">
-            <video ref={videoRef} className="video-preview" playsInline muted />
+  
+            {/* 
+              1) 这里给视频和测光圈都包裹到一个带有 "video-container" 类名的 div 中 
+              2) 后面在 CSS 里给 .video-container 设置 position: relative 
+            */}
+            <div className="video-container">
+              <video ref={videoRef} className="video-preview" playsInline muted />
+              <div
+                className="metering-area"
+                style={{
+                  width: circleSize,
+                  height: circleSize
+                }}
+              />
+            </div>
+  
             <canvas ref={histCanvasRef} className="histogram-canvas" />
             <canvas ref={canvasRef} className="hidden-canvas" />
+  
             <div className="exposure-info">
               {error ? (
                 <p className="error-message">{error}</p>
@@ -595,37 +615,51 @@ function App() {
                 <>
                   <p>
                     {priorityMode === 'shutter'
-                      ? `Chosen Shutter: ${exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1 ? `1/${Math.round(1 / exposure.shutterSpeed)} sec` : `${exposure.shutterSpeed.toFixed(1).replace(/\.0$/, '')} sec`}`
+                      ? `Chosen Shutter: ${
+                          exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
+                            ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
+                            : `${exposure.shutterSpeed
+                                .toFixed(1)
+                                .replace(/\.0$/, '')} sec`
+                        }`
                       : `Chosen Aperture: f/${exposure.aperture}`}
                   </p>
                   <p>
-                    Recommended {priorityMode === 'shutter' ? 'Aperture' : 'Shutter Speed'}:{" "}
+                    Recommended {priorityMode === 'shutter' ? 'Aperture' : 'Shutter Speed'}:{' '}
                     {priorityMode === 'shutter'
-                      ? (exposure.aperture ? `f/${exposure.aperture % 1 === 0 ? exposure.aperture.toFixed(0) : exposure.aperture.toFixed(1)}` : '--')
-                      : (exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
-                          ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
-                          : `${exposure.shutterSpeed.toFixed(1).replace(/\.0$/, '')} sec`)}
+                      ? exposure.aperture
+                        ? `f/${
+                            exposure.aperture % 1 === 0
+                              ? exposure.aperture.toFixed(0)
+                              : exposure.aperture.toFixed(1)
+                          }`
+                        : '--'
+                      : exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
+                      ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
+                      : `${exposure.shutterSpeed
+                          .toFixed(1)
+                          .replace(/\.0$/, '')} sec`}
                   </p>
                   <p style={{ color: exposureWarningColor }}>
-                    Current EV: {Number.isFinite(exposure.smoothedEV)
+                    Current EV:{' '}
+                    {Number.isFinite(exposure.smoothedEV)
                       ? exposure.smoothedEV.toFixed(1)
                       : 'N/A'}
                   </p>
-                  <p>
-                    Scene: {getSceneDescription(exposure.smoothedEV)}
-                  </p>
+                  <p>Scene: {getSceneDescription(exposure.smoothedEV)}</p>
                   <p className="note">
-                    (Using {meteringMode === 'center'
+                    (Using{' '}
+                    {meteringMode === 'center'
                       ? 'center-weighted (Central 20%, Gaussian Weighting)'
                       : 'spot (Central 5% area)'}{' '}
-                    metering, ISO = {iso}, EV Compensation = {compensation}, Priority Mode = {priorityMode}, Calibration Factor = {calibrationFactor})
+                    metering, ISO = {iso}, EV Compensation = {compensation}, Priority Mode ={' '}
+                    {priorityMode}, Calibration Factor = {calibrationFactor})
                   </p>
                   <p className="note">
-                    EV formula: EV = {referenceEV} + log₂((Brightness × {calibrationFactor})/{referenceGray}) + log₂(ISO/100)
+                    EV formula: EV = {referenceEV} + log₂((Brightness × {calibrationFactor})/
+                    {referenceGray}) + log₂(ISO/100)
                   </p>
-                  <p>
-                    Exposure difference: {Math.abs(exposure.evDifference).toFixed(1)} EV
-                  </p>
+                  <p>Exposure difference: {Math.abs(exposure.evDifference).toFixed(1)} EV</p>
                   {exposureWarning && <p className="warning">{exposureWarning}</p>}
                 </>
               )}

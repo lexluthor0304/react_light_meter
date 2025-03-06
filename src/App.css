@@ -253,3 +253,27 @@ body {
     max-height: 30vh;
   }
 }
+
+/* 父容器相对定位 */
+.video-container {
+  position: relative; 
+  display: inline-block; /* 也可以用 block，看你的布局需求 */
+}
+
+/* 视频正常展示 */
+.video-preview {
+  width: 100%;   /* 或你想固定一个宽度 */
+  height: auto;  /* 保持视频宽高比 */
+}
+
+/* 测光圈绝对定位在容器中央 */
+.metering-area {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 2px dashed white;
+  pointer-events: none;
+  width: 40%;  /* 根据实际需求调整宽度 */
+  height: 30%; /* 根据实际需求调整高度 */
+}
