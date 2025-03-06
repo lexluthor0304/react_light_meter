@@ -75,19 +75,19 @@ const shutterApertureEV = standardShutterSpeeds.flatMap((s) =>
 );
 
 // 虽然下列排序在新版中不直接使用，但依然保留作为参考
-const shutterPriorityEV = shutterApertureEV
-  .map((candidate) => ({
-    ...candidate,
-    ev: Math.log2(candidate.aperture ** 2 / candidate.shutter),
-  }))
-  .sort((a, b) => a.shutter - b.shutter || a.aperture - b.aperture);
+//const shutterPriorityEV = shutterApertureEV
+//  .map((candidate) => ({
+//    ...candidate,
+//    ev: Math.log2(candidate.aperture ** 2 / candidate.shutter),
+//  }))
+//  .sort((a, b) => a.shutter - b.shutter || a.aperture - b.aperture);
 
-const aperturePriorityEV = shutterApertureEV
-  .map((candidate) => ({
-    ...candidate,
-    ev: Math.log2(candidate.aperture ** 2 / candidate.shutter),
-  }))
-  .sort((a, b) => a.aperture - b.aperture || a.shutter - b.shutter);
+//const aperturePriorityEV = shutterApertureEV
+//  .map((candidate) => ({
+//    ...candidate,
+//    ev: Math.log2(candidate.aperture ** 2 / candidate.shutter),
+//  }))
+//  .sort((a, b) => a.aperture - b.aperture || a.shutter - b.shutter);
 
 // 定义18%灰卡对应的反射值（ANSI标准），用于 EV 计算说明
 const referenceGray = 118;
