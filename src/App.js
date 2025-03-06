@@ -595,6 +595,7 @@ function App() {
           </header>
           <main className="meter-main">
             <video ref={videoRef} className="video-preview" playsInline muted />
+            <canvas ref={histCanvasRef} className="histogram-canvas" />
             <canvas ref={canvasRef} className="hidden-canvas" />
             <div className="exposure-info">
               {error ? (
