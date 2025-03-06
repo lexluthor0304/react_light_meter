@@ -314,14 +314,14 @@ function App() {
   // 扩展 ISO 选项
   const [iso, setIso] = useState(100);
   const [compensation, setCompensation] = useState(0);
-  const [priorityMode, setPriorityMode] = useState('shutter'); // 'shutter' 或 'aperture'
+  const [priorityMode, setPriorityMode] = useState('aperture'); // 'shutter' 或 'aperture'
   // 新增：用户固定的光圈或快门参数
   const [chosenAperture, setChosenAperture] = useState(2.8); // 默认光圈 f/2.8
   const [chosenShutter, setChosenShutter] = useState(1/125); // 默认快门 1/125 sec
   // 校准因子（内部调整，不对用户暴露），推荐初始值为 0.85
   const [calibrationFactor] = useState(0.85);
   // 测光模式：'center'（中央20%，高斯加权）或 'spot'（点测光：中央5%）
-  const [meteringMode, setMeteringMode] = useState('center');
+  const [meteringMode, setMeteringMode] = useState('spot');
   const [exposure, setExposure] = useState({ shutterSpeed: 0, aperture: 0, effectiveEV: 0, smoothedEV: 0, evDifference: 0 });
   const [exposureWarning, setExposureWarning] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -591,7 +591,7 @@ function App() {
       exposureWarningColor = 'orange';
     }
   
-    // 根据测光模式，决定圆形大小
+    // 根据测光模式，决定测光范围大小
     const circleSize = meteringMode === 'spot' ? '5%' : '20%';
   
     return (
