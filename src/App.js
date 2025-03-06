@@ -194,6 +194,8 @@ function calculateExposureAperturePriority(avgBrightness, iso, compensation, cho
  */
 function drawHistogram(video, canvas, compensation) {
   if (video.readyState !== 4 || video.paused) return;
+
+  // 1. 将视频帧绘制到临时 canvas 上以读取像素数据
   const downscaleWidth = Math.min(640, video.videoWidth);
   const downscaleHeight = Math.min(480, video.videoHeight);
   const ctx = canvas.getContext('2d');
@@ -206,73 +208,91 @@ function drawHistogram(video, canvas, compensation) {
     console.error('drawImage error:', err);
     return;
   }
+
+  // 2. 统计 8 位直方图
   const imageData = tempCtx.getImageData(0, 0, downscaleWidth, downscaleHeight);
   const data = imageData.data;
   const histogram = new Array(256).fill(0);
   for (let i = 0; i < data.length; i += 4) {
     const pixelIndex = i / 4;
+    // 每隔一个像素采样
     if (pixelIndex % 2 === 0) {
       const brightness = Math.floor(
-        0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+        0.299 * data[i] +
+        0.587 * data[i + 1] +
+        0.114 * data[i + 2]
       );
       const adjusted = brightness * Math.pow(2, compensation);
       const adjustedBrightness = Math.min(Math.round(adjusted), 255);
       histogram[adjustedBrightness]++;
     }
   }
-  // 此处直方图尺寸调整为 320×150（如有需要可调整）
+
+  // 3. 设置直方图画布尺寸（320×150）
   const histWidth = 320;
   const histHeight = 150;
   canvas.width = histWidth;
   canvas.height = histHeight;
   const maxCount = Math.max(...histogram) || 1;
-  const scaleX = histWidth / 256; // 每个直方图 bin 的宽度缩放因子
-  
+  const scaleX = histWidth / 256; // 将 0～255 映射到画布宽度
+
   requestAnimationFrame(() => {
+    // 4. 绘制直方图柱子
     ctx.clearRect(0, 0, histWidth, histHeight);
-    // 绘制直方图
     for (let i = 0; i < 256; i++) {
       const binHeight = (histogram[i] / maxCount) * histHeight;
+      // 过曝 (>245) 红色，欠曝 (<15) 蓝色，其余绿色
       ctx.fillStyle = i > 245 ? 'red' : i < 15 ? 'blue' : 'green';
       ctx.fillRect(i * scaleX, histHeight - binHeight, scaleX, binHeight);
     }
-    
-    // 计算 Zone 标签位置 —— 利用 Zone 系统中每个 Zone 的区域
-    // 为了确定各 Zone 的区域，我们先计算 Zone 2 至 Zone 7 的“边界”：
-    // 边界计算公式：referenceGray * 2^(zone - 5)
-    // 注意：直方图只显示 0~255 的亮度，超出部分统一用 255 表示
-    const zoneNumbersFull = [2, 3, 4, 5, 6, 7];
-    const boundaries = zoneNumbersFull.map(zone => {
-      let b = referenceGray * Math.pow(2, zone - 5);
-      return b > 255 ? 255 : b;
+
+    // 5. 计算 Zone 边界
+    // Zone 边界公式：b = referenceGray * 2^(zone - 5)
+    // 其中 zoneNumbers 为 [2,3,4,5,6,7]
+    const zoneNumbers = [2, 3, 4, 5, 6, 7];
+    // 计算原始边界（未 clamp）
+    const computedBoundaries = zoneNumbers.map(zone =>
+      referenceGray * Math.pow(2, zone - 5)
+    );
+    // 对超出 255 的边界进行 clamp，并记录是否有区域被剪裁
+    let clipped = false;
+    const boundaries = computedBoundaries.map(b => {
+      if (b > 255) {
+        clipped = true;
+        return 255;
+      }
+      return b;
     });
-    // 将亮度值转换为画布坐标
+    // 将边界映射到画布 x 坐标
     const xBoundaries = boundaries.map(b => b * scaleX);
-    
-    // 可选：绘制 Zone 3~7 的分界线（即 xBoundaries[1] 至 xBoundaries[5]）
+
+    // 6. 绘制可见的 Zone 分界线和标签
     ctx.save();
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 1;
-    for (let i = 1; i < xBoundaries.length; i++) {
-      let x = xBoundaries[i];
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, histHeight);
-      ctx.stroke();
-    }
-    
-    // 现在为 Zone 3 至 Zone 7 计算标签位置
-    ctx.fillStyle = 'black';
     ctx.font = '12px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const zoneLabels = [3, 4, 5, 6, 7];
-    zoneLabels.forEach((zone, index) => {
-      const left = xBoundaries[index];
-      const right = index < xBoundaries.length - 1 ? xBoundaries[index + 1] : histWidth;
-      const midX = (left + right) / 2;
-      ctx.fillText(`Z${zone}`, midX, 12);
-    });
+    ctx.fillStyle = 'black';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    // 只绘制那些计算结果未超出 255 的 Zone（通常 Zone3～Zone5会完全显示）
+    for (let i = 1; i < zoneNumbers.length; i++) {
+      if (computedBoundaries[i] <= 255) {
+        const x = xBoundaries[i];
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, histHeight);
+        ctx.stroke();
+        // 在分界线附近标注 Zone（这里简单在 x 坐标右侧标注）
+        ctx.fillText(`Z${zoneNumbers[i]}`, x + 5, 2);
+      }
+    }
+    // 如果有区域超出 255，则在直方图最右侧显示 CLIPPED 标识
+    if (clipped) {
+      ctx.fillStyle = 'red';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('CLIPPED', histWidth - 5, 2);
+    }
     ctx.restore();
   });
 }
