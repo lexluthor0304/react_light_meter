@@ -76,7 +76,7 @@ const shutterApertureEV = standardShutterSpeeds.flatMap((s) =>
 
 // 定义18%灰卡对应的反射值（调整为更接近数码设备标准）和基准 EV 值
 const referenceGray = 128;
-const referenceEV = 5; // 基准 EV 值
+const referenceEV = 6; // 基准 EV 值
 
 /**
  * 计算视频帧中心区域的平均亮度
