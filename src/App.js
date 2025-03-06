@@ -639,7 +639,6 @@ function App() {
                 </>
               )}
             </div>
-            <canvas ref={histCanvasRef} className="histogram-canvas" />
           </main>
         </div>
       </>
