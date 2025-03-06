@@ -273,33 +273,44 @@ function drawHistogram(video, canvas, compensation) {
       histogram[adjustedBrightness]++;
     }
   }
-  canvas.width = 256;
-  canvas.height = 100;
+  // 新直方图尺寸：宽 512，高 200
+  const histWidth = 512;
+  const histHeight = 200;
+  canvas.width = histWidth;
+  canvas.height = histHeight;
   const maxCount = Math.max(...histogram) || 1;
+  const scaleX = histWidth / 256; // 每个直方图 bin 的宽度缩放因子
   requestAnimationFrame(() => {
-    ctx.clearRect(0, 0, 256, 100);
+    ctx.clearRect(0, 0, histWidth, histHeight);
     for (let i = 0; i < 256; i++) {
-      const binHeight = (histogram[i] / maxCount) * 100;
+      const binHeight = (histogram[i] / maxCount) * histHeight;
       ctx.fillStyle = i > 245 ? 'red' : i < 15 ? 'blue' : 'green';
-      ctx.fillRect(i, 100 - binHeight, 1, binHeight);
+      ctx.fillRect(i * scaleX, histHeight - binHeight, scaleX, binHeight);
     }
     // 标注 Zone III 到 Zone VII
     ctx.save();
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 1;
-    ctx.font = '10px sans-serif';
+    ctx.font = '14px sans-serif'; // 调大字体便于阅读
     const zones = [3, 4, 5, 6, 7];
     zones.forEach(zone => {
       // 根据 Zone System 计算对应亮度值
       const brightnessForZone = referenceGray * Math.pow(2, zone - 5);
-      // 由于 canvas 宽度固定为 256，超出部分按右侧边界显示
-      const x = brightnessForZone > canvas.width ? canvas.width : brightnessForZone;
+      // 乘以缩放因子转换到新坐标系
+      let x = brightnessForZone * scaleX;
+      if (x > histWidth) x = histWidth;
       ctx.beginPath();
       ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
+      ctx.lineTo(x, histHeight);
       ctx.stroke();
-      // 在直线旁边标注区号（例如：“区3”）
-      ctx.fillText(`Zone${zone}`, x + 2, 10);
+      // 计算文本宽度，调整位置确保显示完全
+      const text = `Zone ${zone}`;
+      const textWidth = ctx.measureText(text).width;
+      let textX = x + 2;
+      if (textX + textWidth > histWidth) {
+        textX = x - textWidth - 2;
+      }
+      ctx.fillText(text, textX, 20);
     });
     ctx.restore();
   });
