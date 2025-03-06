@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 
 // 兼容 ESM（Node.js 20+）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DOMAIN = "https://http://lightmeter.tokugai.com"; // 替换成你的域名
+const DOMAIN = "https://lightmeter.tokugai.com"; // 替换成你的域名
 
 const pages = [
   "/"
