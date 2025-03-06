@@ -74,42 +74,25 @@ const shutterApertureEV = standardShutterSpeeds.flatMap((s) =>
   }))
 );
 
-// 虽然下列排序在新版中不直接使用，但依然保留作为参考
-//const shutterPriorityEV = shutterApertureEV
-//  .map((candidate) => ({
-//    ...candidate,
-//    ev: Math.log2(candidate.aperture ** 2 / candidate.shutter),
-//  }))
-//  .sort((a, b) => a.shutter - b.shutter || a.aperture - b.aperture);
-
-//const aperturePriorityEV = shutterApertureEV
-//  .map((candidate) => ({
-//    ...candidate,
-//    ev: Math.log2(candidate.aperture ** 2 / candidate.shutter),
-//  }))
-//  .sort((a, b) => a.aperture - b.aperture || a.shutter - b.shutter);
-
-// 定义18%灰卡对应的反射值（ANSI标准），用于 EV 计算说明
-const referenceGray = 118;
+// 定义18%灰卡对应的反射值（调整为更接近数码设备标准）和基准 EV 值
+const referenceGray = 128;
 const referenceEV = 12.7; // 基准 EV 值
 
 /**
- * 计算视频帧中心区域的加权平均亮度
- * 根据测光模式不同，选取区域：
- *  - center：中心权重，使用中央20%区域（高斯加权）
- *  - spot：点测光，使用中央5%区域（均匀采样）
+ * 计算视频帧中心区域的平均亮度
+ * 采用直接感知亮度计算（基于 sRGB 标准，无 Gamma 转换）
  */
 function computeBrightness(video, canvas, meteringMode) {
   if (video.readyState !== 4 || video.paused) return 0;
   const ctx = canvas.getContext('2d');
   const { videoWidth: width, videoHeight: height } = video;
   if (width === 0 || height === 0) return 0;
+  
   // 降采样到最多 640x480
   const downscaleWidth = Math.min(640, width);
   const downscaleHeight = Math.min(480, height);
   canvas.width = downscaleWidth;
   canvas.height = downscaleHeight;
-  ctx.clearRect(0, 0, downscaleWidth, downscaleHeight);
   ctx.drawImage(video, 0, 0, downscaleWidth, downscaleHeight);
 
   let regionWidth, regionHeight;
@@ -128,45 +111,22 @@ function computeBrightness(video, canvas, meteringMode) {
   const data = imageData.data;
 
   let total = 0, count = 0;
-  if (meteringMode === 'spot') {
-    // 点测光：直接平均（无权重）
-    for (let i = 0; i < data.length; i += 4) {
-      const r = Math.pow(data[i] / 255, 2.2);
-      const g = Math.pow(data[i + 1] / 255, 2.2);
-      const b = Math.pow(data[i + 2] / 255, 2.2);
-      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      total += luminance;
-      count++;
-    }
-  } else {
-    // 中心权重：采用高斯加权，中心基于采样区域的尺寸
-    const regionCenterX = regionWidth / 2;
-    const regionCenterY = regionHeight / 2;
-    const sigma = regionWidth / 4;
-    for (let i = 0; i < data.length; i += 4) {
-      const pixelIndex = i / 4;
-      const px = pixelIndex % imageData.width;
-      const py = Math.floor(pixelIndex / imageData.width);
-      const dx = px - regionCenterX;
-      const dy = py - regionCenterY;
-      const weight = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
-      const r = Math.pow(data[i] / 255, 2.2);
-      const g = Math.pow(data[i + 1] / 255, 2.2);
-      const b = Math.pow(data[i + 2] / 255, 2.2);
-      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      total += luminance * weight;
-      count += weight;
-    }
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    // 直接计算感知亮度（基于 sRGB 推荐公式，无 Gamma 变换）
+    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    total += luminance;
+    count++;
   }
-  const avgLinear = count ? total / count : 0;
-  const avgGamma = Math.pow(avgLinear, 1 / 2.2) * 255;
-  return avgGamma;
+  return count ? total / count : 0;
 }
 
 /**
  * 计算 EV
- * 公式说明：measuredEV = referenceEV + log₂((avgBrightness * calibrationFactor)/referenceGray) + log₂(ISO/100)
- * 其中 referenceGray（118）为 18% 灰卡反射值（ANSI标准）
+ * 公式说明：measuredEV = referenceEV + log₂((avgBrightness × calibrationFactor)/referenceGray) + log₂(ISO/100)
+ * calibrationFactor 为内部校准系数，不对用户暴露
  */
 function calculateEffectiveEV(avgBrightness, iso, compensation, calibrationFactor = 1.0) {
   if (avgBrightness <= 0) return -Infinity;
@@ -226,19 +186,6 @@ function calculateExposureAperturePriority(avgBrightness, iso, compensation, cho
     evDifference,
   };
 }
-
-/**
- * 根据优先模式选择曝光计算逻辑
- * 此函数根据传入的 chosenValue（光圈或快门）调用对应的计算函数
-
-function calculateExposure(avgBrightness, iso, compensation, priorityMode, chosenValue, calibrationFactor = 1.0) {
-  if (priorityMode === 'shutter') {
-    return calculateExposureShutterPriority(avgBrightness, iso, compensation, chosenValue, calibrationFactor);
-  } else {
-    return calculateExposureAperturePriority(avgBrightness, iso, compensation, chosenValue, calibrationFactor);
-  }
-}
- */
 
 /**
  * 绘制直方图：对降采样视频帧绘制直方图，
@@ -315,19 +262,15 @@ function drawHistogram(video, canvas, compensation) {
     }
     
     // 现在为 Zone 3 至 Zone 7 计算标签位置
-    // 对于 Zone i（i=3~7），区域为 [xBoundaries[i-2], xBoundaries[i-1]]
     ctx.fillStyle = 'black';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const zoneLabels = [3, 4, 5, 6, 7];
     zoneLabels.forEach((zone, index) => {
-      // index 0 对应 Zone 3，其区域为 [xBoundaries[0], xBoundaries[1]]
       const left = xBoundaries[index];
-      // 对于最后一个 Zone（Zone 7），右边界以画布右侧为准
       const right = index < xBoundaries.length - 1 ? xBoundaries[index + 1] : histWidth;
       const midX = (left + right) / 2;
-      // 将 Zone 标签放置在区域内靠上位置（例如 y=12）
       ctx.fillText(`Z${zone}`, midX, 12);
     });
     ctx.restore();
@@ -356,8 +299,8 @@ function App() {
   // 新增：用户固定的光圈或快门参数
   const [chosenAperture, setChosenAperture] = useState(2.8); // 默认光圈 f/2.8
   const [chosenShutter, setChosenShutter] = useState(1/125); // 默认快门 1/125 sec
-  // 校准因子固定为1.0（基于标准18%灰卡假设）
-  const [calibrationFactor] = useState(1.0);
+  // 校准因子（内部调整，不对用户暴露），推荐初始值为 0.85
+  const [calibrationFactor] = useState(0.85);
   // 测光模式：'center'（中央20%，高斯加权）或 'spot'（点测光：中央5%）
   const [meteringMode, setMeteringMode] = useState('center');
   const [exposure, setExposure] = useState({ shutterSpeed: 0, aperture: 0, effectiveEV: 0, smoothedEV: 0, evDifference: 0 });
@@ -460,7 +403,7 @@ function App() {
               if (smoothedEVRef.current === null) {
                 smoothedEVRef.current = currentEV;
               } else {
-                const smoothingFactor = 0.3;
+                const smoothingFactor = 0.1;
                 smoothedEVRef.current =
                   smoothedEVRef.current * (1 - smoothingFactor) + currentEV * smoothingFactor;
               }
@@ -513,7 +456,7 @@ function App() {
       <div className="container">
         <DocumentMetadata />
         <h1 className="title">Set ISO, Exposure Compensation, Priority &amp; Metering Mode</h1>
-        <p className="note">Note: Light metering is based on the assumption of a standard 18% gray card (calibration factor = 1.0).</p>
+        <p className="note">Note: Light metering is based on the assumption of a standard 18% gray card (calibration factor = 0.85).</p>
         <div className="input-group">
           <label>
             ISO:
@@ -675,10 +618,10 @@ function App() {
                     (Using {meteringMode === 'center'
                       ? 'center-weighted (Central 20%, Gaussian Weighting)'
                       : 'spot (Central 5% area)'}{' '}
-                    metering, ISO = {iso}, EV Compensation = {compensation}, Priority Mode = {priorityMode}, Calibration Factor = 1.0)
+                    metering, ISO = {iso}, EV Compensation = {compensation}, Priority Mode = {priorityMode}, Calibration Factor = {calibrationFactor})
                   </p>
                   <p className="note">
-                    EV formula: EV = {referenceEV} + log₂((Brightness × 1.0)/{referenceGray}) + log₂(ISO/100)
+                    EV formula: EV = {referenceEV} + log₂((Brightness × {calibrationFactor})/{referenceGray}) + log₂(ISO/100)
                   </p>
                   <p>
                     Exposure difference: {Math.abs(exposure.evDifference).toFixed(1)} EV
