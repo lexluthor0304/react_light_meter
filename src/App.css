@@ -100,6 +100,13 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  position: relative; /* 设置容器为相对定位 */
+  display: inline-block;
+  position: relative;      /* 关键！子元素定位基准 */
+  width: 100%;
+  max-width: 640px;        /* 最大宽度限制，避免无限扩展 */
+  margin: 0 auto;          /* 居中显示 */
+  overflow: hidden; 
 }
 
 /* 视频预览样式优化，避免视频变形 */
@@ -117,8 +124,10 @@ body {
 @supports not (aspect-ratio: 16 / 9) {
   .video-preview {
     width: 100%;
+    height: auto;           /* 高度自适应，保持视频比例 */
     position: relative;
     padding-top: 56.25%;
+    display: block;
   }
   .video-preview video {
     position: absolute;
@@ -145,6 +154,9 @@ body {
   border: 2px solid #39FF14;
   box-shadow: 0 0 10px #39FF14, 0 0 20px #39FF14;
   margin-top: 1rem;
+  max-height: 35%;         /* 限制最大高度避免溢出 */
+  overflow-y: auto;        /* 内容溢出时滚动显示 */
+  pointer-events: none;    /* 避免阻碍视频点击事件 */
 }
 
 /* 直方图 canvas 样式 */
@@ -176,11 +188,6 @@ body {
   font-size: 1.5rem;
   text-align: center;
   margin-top: 2rem;
-}
-
-.meter-main {
-  position: relative; /* 设置容器为相对定位 */
-  display: inline-block;
 }
 
 .video-preview {
