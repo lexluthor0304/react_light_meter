@@ -74,7 +74,7 @@ const shutterApertureEV = standardShutterSpeeds.flatMap((s) =>
   }))
 );
 
-// 生成两种排序方案
+// 虽然下列排序在新版中不直接使用，但依然保留作为参考
 const shutterPriorityEV = shutterApertureEV
   .map((candidate) => ({
     ...candidate,
@@ -87,7 +87,7 @@ const aperturePriorityEV = shutterApertureEV
     ...candidate,
     ev: Math.log2(candidate.aperture ** 2 / candidate.shutter),
   }))
-  .sort((a, b) => a.aperture - b.aperture || a.shutter - b.aperture);
+  .sort((a, b) => a.aperture - b.aperture || a.shutter - b.shutter);
 
 // 定义18%灰卡对应的反射值（ANSI标准），用于 EV 计算说明
 const referenceGray = 118;
@@ -178,56 +178,50 @@ function calculateEffectiveEV(avgBrightness, iso, compensation, calibrationFacto
 }
 
 /**
- * 快门优先曝光计算
- * 从预生成的 EV 表中寻找与测量 EV 最接近的候选组合，
- * 并从中选择快门速度最快的方案，同时返回 EV 差值供界面反馈使用。
+ * 快门优先曝光计算（用户已选择快门速度）
+ * 仅在候选组合中筛选出快门速度为 chosenShutter 的组合，再选择 EV 最接近的那个
  */
-function calculateExposureShutterPriority(avgBrightness, iso, compensation, calibrationFactor = 1.0) {
+function calculateExposureShutterPriority(avgBrightness, iso, compensation, chosenShutter, calibrationFactor = 1.0) {
   const effectiveEV = calculateEffectiveEV(avgBrightness, iso, compensation, calibrationFactor);
-  let bestCandidates = [];
+  const candidates = shutterApertureEV.filter(c => c.shutter === chosenShutter);
+  let closestCandidate = null;
   let minDiff = Infinity;
-  for (const candidate of shutterPriorityEV) {
+  candidates.forEach(candidate => {
     const diff = Math.abs(candidate.ev - effectiveEV);
     if (diff < minDiff) {
       minDiff = diff;
-      bestCandidates = [candidate];
-    } else if (diff === minDiff) {
-      bestCandidates.push(candidate);
+      closestCandidate = candidate;
     }
-  }
-  let chosenCandidate = bestCandidates.length > 0 ? bestCandidates.sort((a, b) => a.shutter - b.shutter)[0] : null;
-  const evDifference = chosenCandidate ? chosenCandidate.ev - effectiveEV : 0;
+  });
+  const evDifference = closestCandidate ? closestCandidate.ev - effectiveEV : 0;
   return {
-    shutterSpeed: chosenCandidate ? chosenCandidate.shutter : 0,
-    aperture: chosenCandidate ? chosenCandidate.aperture : 0,
+    shutterSpeed: chosenShutter,
+    aperture: closestCandidate ? closestCandidate.aperture : 0,
     effectiveEV,
     evDifference,
   };
 }
 
 /**
- * 光圈优先曝光计算
- * 从预生成的 EV 表中寻找与测量 EV 最接近的候选组合，
- * 并从中选择光圈值最大的方案，同时返回 EV 差值供界面反馈使用。
+ * 光圈优先曝光计算（用户已选择光圈）
+ * 仅在候选组合中筛选出光圈为 chosenAperture 的组合，再选择 EV 最接近的那个
  */
-function calculateExposureAperturePriority(avgBrightness, iso, compensation, calibrationFactor = 1.0) {
+function calculateExposureAperturePriority(avgBrightness, iso, compensation, chosenAperture, calibrationFactor = 1.0) {
   const effectiveEV = calculateEffectiveEV(avgBrightness, iso, compensation, calibrationFactor);
-  let bestCandidates = [];
+  const candidates = shutterApertureEV.filter(c => c.aperture === chosenAperture);
+  let closestCandidate = null;
   let minDiff = Infinity;
-  for (const candidate of aperturePriorityEV) {
+  candidates.forEach(candidate => {
     const diff = Math.abs(candidate.ev - effectiveEV);
     if (diff < minDiff) {
       minDiff = diff;
-      bestCandidates = [candidate];
-    } else if (diff === minDiff) {
-      bestCandidates.push(candidate);
+      closestCandidate = candidate;
     }
-  }
-  let chosenCandidate = bestCandidates.length > 0 ? bestCandidates.sort((a, b) => a.aperture - b.aperture)[0] : null;
-  const evDifference = chosenCandidate ? chosenCandidate.ev - effectiveEV : 0;
+  });
+  const evDifference = closestCandidate ? closestCandidate.ev - effectiveEV : 0;
   return {
-    shutterSpeed: chosenCandidate ? chosenCandidate.shutter : 0,
-    aperture: chosenCandidate ? chosenCandidate.aperture : 0,
+    shutterSpeed: closestCandidate ? closestCandidate.shutter : 0,
+    aperture: chosenAperture,
     effectiveEV,
     evDifference,
   };
@@ -235,12 +229,13 @@ function calculateExposureAperturePriority(avgBrightness, iso, compensation, cal
 
 /**
  * 根据优先模式选择曝光计算逻辑
+ * 此函数根据传入的 chosenValue（光圈或快门）调用对应的计算函数
  */
-function calculateExposure(avgBrightness, iso, compensation, priorityMode, calibrationFactor = 1.0) {
+function calculateExposure(avgBrightness, iso, compensation, priorityMode, chosenValue, calibrationFactor = 1.0) {
   if (priorityMode === 'shutter') {
-    return calculateExposureShutterPriority(avgBrightness, iso, compensation, calibrationFactor);
+    return calculateExposureShutterPriority(avgBrightness, iso, compensation, chosenValue, calibrationFactor);
   } else {
-    return calculateExposureAperturePriority(avgBrightness, iso, compensation, calibrationFactor);
+    return calculateExposureAperturePriority(avgBrightness, iso, compensation, chosenValue, calibrationFactor);
   }
 }
 
@@ -309,6 +304,9 @@ function App() {
   const [iso, setIso] = useState(100);
   const [compensation, setCompensation] = useState(0);
   const [priorityMode, setPriorityMode] = useState('shutter'); // 'shutter' 或 'aperture'
+  // 新增：用户固定的光圈或快门参数
+  const [chosenAperture, setChosenAperture] = useState(2.8); // 默认光圈 f/2.8
+  const [chosenShutter, setChosenShutter] = useState(1/125); // 默认快门 1/125 sec
   // 校准因子固定为1.0（基于标准18%灰卡假设）
   const [calibrationFactor] = useState(1.0);
   // 测光模式：'center'（中央20%，高斯加权）或 'spot'（点测光：中央5%）
@@ -401,15 +399,14 @@ function App() {
               setError('Scene too bright: Consider reducing ISO or adjusting aperture.');
             } else {
               setError('');
-              // 使用未经滤波的 EV 计算推荐曝光
-              const exp = calculateExposure(
-                avgBrightness,
-                iso,
-                compensation,
-                priorityMode,
-                calibrationFactor
-              );
-              // EV 平滑滤波仅用于 UI 显示，不影响推荐参数
+              // 根据优先模式调用对应的曝光计算函数
+              let exp;
+              if (priorityMode === 'aperture') {
+                exp = calculateExposureAperturePriority(avgBrightness, iso, compensation, chosenAperture, calibrationFactor);
+              } else {
+                exp = calculateExposureShutterPriority(avgBrightness, iso, compensation, chosenShutter, calibrationFactor);
+              }
+              // EV 平滑滤波（仅用于 UI 显示）
               let currentEV = exp.effectiveEV;
               if (smoothedEVRef.current === null) {
                 smoothedEVRef.current = currentEV;
@@ -436,7 +433,7 @@ function App() {
       }, 500);
       return () => clearInterval(intervalId);
     }
-  }, [step, stream, iso, compensation, priorityMode, calibrationFactor, meteringMode]);
+  }, [step, stream, iso, compensation, priorityMode, calibrationFactor, meteringMode, chosenAperture, chosenShutter]);
 
   // 组件卸载时停止摄像头流
   useEffect(() => {
@@ -461,8 +458,7 @@ function App() {
     );
   }
 
-  // Step 2: 选择 ISO、曝光补偿、优先模式和测光模式
-  // 此处提醒用户：本 App 的测光基于标准 18% 灰卡假设（校准因子固定为 1.0）
+  // Step 2: 选择 ISO、曝光补偿、优先模式及固定的光圈/快门值，同时选择测光模式
   if (step === 'iso') {
     return (
       <div className="container">
@@ -520,6 +516,40 @@ function App() {
             </select>
           </label>
         </div>
+        {priorityMode === 'aperture' && (
+          <div className="input-group">
+            <label>
+              Chosen Aperture:
+              <select value={chosenAperture} onChange={(e) => setChosenAperture(parseFloat(e.target.value))} className="select">
+                <option value={1.4}>f/1.4</option>
+                <option value={2}>f/2</option>
+                <option value={2.8}>f/2.8</option>
+                <option value={4}>f/4</option>
+                <option value={5.6}>f/5.6</option>
+                <option value={8}>f/8</option>
+                <option value={11}>f/11</option>
+                <option value={16}>f/16</option>
+              </select>
+            </label>
+          </div>
+        )}
+        {priorityMode === 'shutter' && (
+          <div className="input-group">
+            <label>
+              Chosen Shutter:
+              <select value={chosenShutter} onChange={(e) => setChosenShutter(parseFloat(e.target.value))} className="select">
+                <option value={1/1000}>1/1000 sec</option>
+                <option value={1/500}>1/500 sec</option>
+                <option value={1/250}>1/250 sec</option>
+                <option value={1/125}>1/125 sec</option>
+                <option value={1/60}>1/60 sec</option>
+                <option value={1/30}>1/30 sec</option>
+                <option value={1/15}>1/15 sec</option>
+                <option value={1/8}>1/8 sec</option>
+              </select>
+            </label>
+          </div>
+        )}
         <div className="input-group">
           <label>
             Metering Mode:
@@ -542,7 +572,6 @@ function App() {
 
   // Step 3: 测光页面 – 显示摄像头预览、曝光信息、直方图及场景描述
   if (step === 'meter') {
-    // 计算 EV 差值并设置颜色提示（红色：偏差≥2 EV，橙色：偏差 1～2 EV，绿色：误差较小）
     const evDifference = Math.abs(exposure.smoothedEV - exposure.effectiveEV);
     let exposureWarningColor = 'green';
     if (evDifference >= 2) {
@@ -552,7 +581,6 @@ function App() {
     }
     return (
       <>
-        {/* Google Services */}
         <GoogleAnalytics trackingId="G-1ZZ5X14QXX" />
         <GoogleTag trackingId="G-1ZZ5X14QXX" />
         <div className="meter-container">
@@ -566,7 +594,6 @@ function App() {
           </header>
           <main className="meter-main">
             <video ref={videoRef} className="video-preview" playsInline muted />
-            {/* 隐藏 canvas 用于测光计算 */}
             <canvas ref={canvasRef} className="hidden-canvas" />
             <div className="exposure-info">
               {error ? (
@@ -574,20 +601,17 @@ function App() {
               ) : (
                 <>
                   <p>
-                    Recommended Shutter Speed:{' '}
-                    {exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
-                      ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
-                      : `${exposure.shutterSpeed.toFixed(1).replace(/\.0$/, '')} sec`}
+                    {priorityMode === 'shutter'
+                      ? `Chosen Shutter: ${exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1 ? `1/${Math.round(1 / exposure.shutterSpeed)} sec` : `${exposure.shutterSpeed.toFixed(1).replace(/\.0$/, '')} sec`}`
+                      : `Chosen Aperture: f/${exposure.aperture}`}
                   </p>
                   <p>
-                    Recommended Aperture:{' '}
-                    {exposure.aperture
-                      ? `f/${
-                          exposure.aperture % 1 === 0
-                            ? exposure.aperture.toFixed(0)
-                            : exposure.aperture.toFixed(1)
-                        }`
-                      : '--'}
+                    Recommended {priorityMode === 'shutter' ? 'Aperture' : 'Shutter Speed'}:{" "}
+                    {priorityMode === 'shutter'
+                      ? (exposure.aperture ? `f/${exposure.aperture % 1 === 0 ? exposure.aperture.toFixed(0) : exposure.aperture.toFixed(1)}` : '--')
+                      : (exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
+                          ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
+                          : `${exposure.shutterSpeed.toFixed(1).replace(/\.0$/, '')} sec`)}
                   </p>
                   <p style={{ color: exposureWarningColor }}>
                     Current EV: {Number.isFinite(exposure.smoothedEV)
