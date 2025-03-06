@@ -1,6 +1,6 @@
 /* App.css */
 
-/* 整体背景：渐变黑色并使用未来感字体（请自行引入 Orbitron 字体） */
+/* 整体背景及字体 */
 body {
   margin: 0;
   background: linear-gradient(135deg, #000, #111);
@@ -97,22 +97,17 @@ body {
 /* 测光页面主区域 */
 .meter-main {
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  position: relative; /* 设置容器为相对定位 */
-  display: inline-block;
-  position: relative;      /* 关键！子元素定位基准 */
-  width: 100%;
-  max-width: 640px;        /* 最大宽度限制，避免无限扩展 */
-  margin: 0 auto;          /* 居中显示 */
-  overflow: hidden; 
+  max-width: 640px;
+  margin: 0 auto;
+  position: relative; /* 定位基准 */
+  overflow: hidden;
 }
 
-/* 视频预览样式优化，避免视频变形 */
+/* 视频预览样式优化 */
 .video-preview {
   width: 100%;
-  height: 60vh;
+  height: auto;
+  max-height: 60vh; /* 限制最大高度 */
   object-fit: cover;
   background: black;
   margin-bottom: 1rem;
@@ -123,8 +118,7 @@ body {
 /* 不支持 aspect-ratio 的备用方案 */
 @supports not (aspect-ratio: 16 / 9) {
   .video-preview {
-    width: 100%;
-    height: auto;           /* 高度自适应，保持视频比例 */
+    height: auto;
     position: relative;
     padding-top: 56.25%;
     display: block;
@@ -154,9 +148,9 @@ body {
   border: 2px solid #39FF14;
   box-shadow: 0 0 10px #39FF14, 0 0 20px #39FF14;
   margin-top: 1rem;
-  max-height: 35%;         /* 限制最大高度避免溢出 */
-  overflow-y: auto;        /* 内容溢出时滚动显示 */
-  pointer-events: none;    /* 避免阻碍视频点击事件 */
+  max-height: 35%;
+  overflow-y: auto;
+  pointer-events: none;
 }
 
 /* 备注样式 */
@@ -180,21 +174,57 @@ body {
   margin-top: 2rem;
 }
 
-.video-preview {
-  width: 100%; /* 根据需要调整宽度 */
-  height: auto; 
-}
-
+/* 直方图画布 */
 .histogram-canvas {
   position: absolute;
   top: 10px;
   right: 10px;
   width: 128px;
   height: 50px;
-  opacity: 0.9; /* 提高一点透明度以增加清晰度 */
+  opacity: 0.9;
   pointer-events: none;
   border-radius: 4px;
-  background-color: rgba(0, 0, 0, 0.5); /* 深色背景加强对比 */
-  border: 1px solid rgba(255, 255, 255, 0.3); /* 边框更细腻柔和 */
-  box-shadow: 0 0 5px rgba(0,0,0,0.5); /* 柔和阴影 */
+  background-color: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .title {
+    font-size: 2rem;
+  }
+  .message {
+    font-size: 1rem;
+  }
+  .btn, .select {
+    padding: 0.5rem;
+    font-size: 0.9rem;
+  }
+  .header-title {
+    font-size: 1.2rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .container, .meter-container {
+    padding: 0.5rem;
+  }
+  .title {
+    font-size: 1.75rem;
+  }
+  .message {
+    font-size: 0.9rem;
+  }
+  .btn, .select {
+    padding: 0.4rem;
+    font-size: 0.85rem;
+  }
+  .header-title {
+    font-size: 1rem;
+  }
+  .exposure-info {
+    padding: 0.5rem;
+    font-size: 0.9rem;
+  }
 }
