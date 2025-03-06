@@ -230,7 +230,7 @@ function calculateExposureAperturePriority(avgBrightness, iso, compensation, cho
 /**
  * 根据优先模式选择曝光计算逻辑
  * 此函数根据传入的 chosenValue（光圈或快门）调用对应的计算函数
- */
+
 function calculateExposure(avgBrightness, iso, compensation, priorityMode, chosenValue, calibrationFactor = 1.0) {
   if (priorityMode === 'shutter') {
     return calculateExposureShutterPriority(avgBrightness, iso, compensation, chosenValue, calibrationFactor);
@@ -238,6 +238,7 @@ function calculateExposure(avgBrightness, iso, compensation, priorityMode, chose
     return calculateExposureAperturePriority(avgBrightness, iso, compensation, chosenValue, calibrationFactor);
   }
 }
+ */
 
 /**
  * 绘制直方图：对降采样视频帧绘制直方图，
