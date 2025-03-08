@@ -7,8 +7,22 @@ import GoogleAnalytics from "./GoogleAnalytics.js";
 // 预先创建临时 canvas，用于直方图绘制，避免频繁创建销毁
 const tempCanvas = document.createElement('canvas');
 
+// Gamma 校正：sRGB 转换到线性 RGB
+const linearize = (c) => {
+  c /= 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+};
+
+// ISO 和曝光补偿可选值
+const isoValues = [50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 3200];
+const compensationSteps = [-3, -2.7, -2.3, -2, -1.7, -1.3, -1, -0.7, -0.3, 0, 0.3, 0.7, 1, 1.3, 1.7, 2, 2.3, 2.7, 3];
+
+// 直方图阈值初始值
+const DEFAULT_OVEREXPOSURE_THRESHOLD = 245;
+const DEFAULT_UNDEREXPOSURE_THRESHOLD = 15;
+
 /**
- * DocumentMetadata – 页面 Meta 标签（已增加 format-detection 和 tap-highlight 支持移动端防误触）
+ * DocumentMetadata – 页面 Meta 标签
  */
 function DocumentMetadata() {
   return (
@@ -46,7 +60,7 @@ function DocumentMetadata() {
   );
 }
 
-// 快门速度上限调整为 1/1000 秒，更符合胶片相机（如徕卡M6）的实际情况
+// 快门速度和光圈数据
 const standardShutterSpeeds = [
   1 / 1000,
   1 / 500,
@@ -72,34 +86,31 @@ const shutterApertureEV = standardShutterSpeeds.flatMap((s) =>
   }))
 );
 
-// 定义18%灰卡对应的反射值（调整为更接近数码设备标准）和基准 EV 值
+// 定义18%灰卡对应的参考值
 const referenceGray = 128;
-const referenceEV = 7; // 基准 EV 值
+const referenceEV = 7;
 
-/**
+/****************************************************
  * 计算视频帧中心区域的平均亮度
- * 采用直接感知亮度计算（基于 sRGB 标准，无 Gamma 转换）
- */
+ * 转换为线性 RGB 后计算亮度（乘以255恢复范围）
+ ****************************************************/
 function computeBrightness(video, canvas, meteringMode) {
   if (video.readyState !== 4 || video.paused) return 0;
   const ctx = canvas.getContext('2d');
   const { videoWidth: width, videoHeight: height } = video;
   if (width === 0 || height === 0) return 0;
   
-  // 降采样到最多 640x480
   const downscaleWidth = Math.min(640, width);
   const downscaleHeight = Math.min(480, height);
   canvas.width = downscaleWidth;
   canvas.height = downscaleHeight;
   ctx.drawImage(video, 0, 0, downscaleWidth, downscaleHeight);
-
+  
   let regionWidth, regionHeight;
   if (meteringMode === 'spot') {
-    // 点测光：采样更小区域，改为 5%
-    regionWidth = downscaleWidth * 0.05;
-    regionHeight = downscaleHeight * 0.05;
+    regionWidth = downscaleWidth * 0.03;
+    regionHeight = downscaleHeight * 0.03;
   } else {
-    // 中心权重测光：中央 20% 区域
     regionWidth = downscaleWidth * 0.2;
     regionHeight = downscaleHeight * 0.2;
   }
@@ -107,26 +118,21 @@ function computeBrightness(video, canvas, meteringMode) {
   const startY = (downscaleHeight - regionHeight) / 2;
   const imageData = ctx.getImageData(startX, startY, regionWidth, regionHeight);
   const data = imageData.data;
-
+  
   let total = 0, count = 0;
   for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    // 直接计算感知亮度（基于 sRGB 推荐公式，无 Gamma 变换）
-    // const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    const luminance = (0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)) * 255;
     total += luminance;
     count++;
   }
   return count ? total / count : 0;
 }
 
-/**
- * 计算 EV
- * 公式说明：measuredEV = referenceEV + log₂((avgBrightness × calibrationFactor)/referenceGray) + log₂(ISO/100)
- * calibrationFactor 为内部校准系数，不对用户暴露
- */
+/****************************************************
+ * 计算 EV 值
+ * EV = referenceEV + log₂((avgBrightness × calibrationFactor)/referenceGray) + log₂(ISO/100)
+ ****************************************************/
 function calculateEffectiveEV(avgBrightness, iso, compensation, calibrationFactor = 1.0) {
   if (avgBrightness <= 0) return -Infinity;
   const measuredEV =
@@ -136,15 +142,13 @@ function calculateEffectiveEV(avgBrightness, iso, compensation, calibrationFacto
   return measuredEV + compensation;
 }
 
-/**
- * 快门优先曝光计算（用户已选择快门速度）
- * 仅在候选组合中筛选出快门速度为 chosenShutter 的组合，再选择 EV 最接近的那个
- */
+/****************************************************
+ * 快门优先曝光计算
+ ****************************************************/
 function calculateExposureShutterPriority(avgBrightness, iso, compensation, chosenShutter, calibrationFactor = 1.0) {
   const effectiveEV = calculateEffectiveEV(avgBrightness, iso, compensation, calibrationFactor);
   const candidates = shutterApertureEV.filter(c => c.shutter === chosenShutter);
-  let closestCandidate = null;
-  let minDiff = Infinity;
+  let closestCandidate = null, minDiff = Infinity;
   candidates.forEach(candidate => {
     const diff = Math.abs(candidate.ev - effectiveEV);
     if (diff < minDiff) {
@@ -153,23 +157,16 @@ function calculateExposureShutterPriority(avgBrightness, iso, compensation, chos
     }
   });
   const evDifference = closestCandidate ? closestCandidate.ev - effectiveEV : 0;
-  return {
-    shutterSpeed: chosenShutter,
-    aperture: closestCandidate ? closestCandidate.aperture : 0,
-    effectiveEV,
-    evDifference,
-  };
+  return { shutterSpeed: chosenShutter, aperture: closestCandidate ? closestCandidate.aperture : 0, effectiveEV, evDifference };
 }
 
-/**
- * 光圈优先曝光计算（用户已选择光圈）
- * 仅在候选组合中筛选出光圈为 chosenAperture 的组合，再选择 EV 最接近的那个
- */
+/****************************************************
+ * 光圈优先曝光计算
+ ****************************************************/
 function calculateExposureAperturePriority(avgBrightness, iso, compensation, chosenAperture, calibrationFactor = 1.0) {
   const effectiveEV = calculateEffectiveEV(avgBrightness, iso, compensation, calibrationFactor);
   const candidates = shutterApertureEV.filter(c => c.aperture === chosenAperture);
-  let closestCandidate = null;
-  let minDiff = Infinity;
+  let closestCandidate = null, minDiff = Infinity;
   candidates.forEach(candidate => {
     const diff = Math.abs(candidate.ev - effectiveEV);
     if (diff < minDiff) {
@@ -178,23 +175,16 @@ function calculateExposureAperturePriority(avgBrightness, iso, compensation, cho
     }
   });
   const evDifference = closestCandidate ? closestCandidate.ev - effectiveEV : 0;
-  return {
-    shutterSpeed: closestCandidate ? closestCandidate.shutter : 0,
-    aperture: chosenAperture,
-    effectiveEV,
-    evDifference,
-  };
+  return { shutterSpeed: closestCandidate ? closestCandidate.shutter : 0, aperture: chosenAperture, effectiveEV, evDifference };
 }
 
-/**
- * 绘制直方图：对降采样视频帧绘制直方图，
- * 替换颜色逻辑：超过245部分显示红色（过曝），低于15显示蓝色（欠曝），其余显示绿色。
- * 此处采用预先创建的 tempCanvas 避免频繁创建。
- */
-function drawHistogram(video, canvas, compensation) {
+/****************************************************
+ * 绘制直方图
+ * 当 colorChannelMode 为 'combined' 时使用整体亮度直方图；
+ * 为 'separate' 时分别绘制 R、G、B 通道直方图。
+ ****************************************************/
+function drawHistogram(video, canvas, compensation, underExposureThreshold, overExposureThreshold, colorChannelMode = 'combined') {
   if (video.readyState !== 4 || video.paused) return;
-
-  // 1. 将视频帧绘制到临时 canvas 上以读取像素数据
   const downscaleWidth = Math.min(640, video.videoWidth);
   const downscaleHeight = Math.min(480, video.videoHeight);
   const ctx = canvas.getContext('2d');
@@ -207,98 +197,68 @@ function drawHistogram(video, canvas, compensation) {
     console.error('drawImage error:', err);
     return;
   }
-
-  // 2. 统计 8 位直方图
-  const imageData = tempCtx.getImageData(0, 0, downscaleWidth, downscaleHeight);
-  const data = imageData.data;
-  const histogram = new Array(256).fill(0);
-  for (let i = 0; i < data.length; i += 4) {
-    const pixelIndex = i / 4;
-    // 每隔一个像素采样
-    if (pixelIndex % 2 === 0) {
-      const brightness = Math.floor(
-        0.299 * data[i] +
-        0.587 * data[i + 1] +
-        0.114 * data[i + 2]
-      );
-      const adjusted = brightness * Math.pow(2, compensation);
-      const adjustedBrightness = Math.min(Math.round(adjusted), 255);
-      histogram[adjustedBrightness]++;
+  
+  if (colorChannelMode === 'combined') {
+    const imageData = tempCtx.getImageData(0, 0, downscaleWidth, downscaleHeight);
+    const data = imageData.data;
+    const histogram = new Array(256).fill(0);
+    for (let i = 0; i < data.length; i += 4) {
+      if ((i / 4) % 2 === 0) {
+        const brightness = Math.floor(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+        const adjusted = brightness * Math.pow(2, compensation);
+        const adjustedBrightness = Math.min(Math.round(adjusted), 255);
+        histogram[adjustedBrightness]++;
+      }
     }
-  }
-
-  // 3. 设置直方图画布尺寸（320×150）
-  const histWidth = 320;
-  const histHeight = 150;
-  canvas.width = histWidth;
-  canvas.height = histHeight;
-  const maxCount = Math.max(...histogram) || 1;
-  const scaleX = histWidth / 256; // 将 0～255 映射到画布宽度
-
-  requestAnimationFrame(() => {
-    // 4. 绘制直方图柱子
+    const histWidth = 320, histHeight = 150;
+    canvas.width = histWidth;
+    canvas.height = histHeight;
+    const maxCount = Math.max(...histogram) || 1;
+    const scaleX = histWidth / 256;
     ctx.clearRect(0, 0, histWidth, histHeight);
     for (let i = 0; i < 256; i++) {
       const binHeight = (histogram[i] / maxCount) * histHeight;
-      // 过曝 (>245) 红色，欠曝 (<15) 蓝色，其余绿色
-      ctx.fillStyle = i > 245 ? 'red' : i < 15 ? 'blue' : 'green';
+      ctx.fillStyle = i > overExposureThreshold ? 'red' : i < underExposureThreshold ? 'blue' : 'green';
       ctx.fillRect(i * scaleX, histHeight - binHeight, scaleX, binHeight);
     }
-
-    // 5. 计算 Zone 边界
-    // Zone 边界公式：b = referenceGray * 2^(zone - 5)
-    // 其中 zoneNumbers 为 [2,3,4,5,6,7]
-    const zoneNumbers = [2, 3, 4, 5, 6, 7];
-    // 计算原始边界（未 clamp）
-    const computedBoundaries = zoneNumbers.map(zone =>
-      referenceGray * Math.pow(2, zone - 5)
-    );
-    // 对超出 255 的边界进行 clamp，并记录是否有区域被剪裁
-    let clipped = false;
-    const boundaries = computedBoundaries.map(b => {
-      if (b > 255) {
-        clipped = true;
-        return 255;
-      }
-      return b;
-    });
-    // 将边界映射到画布 x 坐标
-    const xBoundaries = boundaries.map(b => b * scaleX);
-
-    // 6. 绘制可见的 Zone 分界线和标签
-    ctx.save();
-    ctx.strokeStyle = 'black';
-    ctx.lineWidth = 1;
-    ctx.font = '12px sans-serif';
-    ctx.fillStyle = 'black';
-    ctx.textBaseline = 'top';
-    ctx.textAlign = 'left';
-    // 只绘制那些计算结果未超出 255 的 Zone（通常 Zone3～Zone5会完全显示）
-    for (let i = 1; i < zoneNumbers.length; i++) {
-      if (computedBoundaries[i] <= 255) {
-        const x = xBoundaries[i];
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, histHeight);
-        ctx.stroke();
-        // 在分界线附近标注 Zone（这里简单在 x 坐标右侧标注）
-        ctx.fillText(`Z${zoneNumbers[i]}`, x + 5, 2);
+  } else if (colorChannelMode === 'separate') {
+    const imageData = tempCtx.getImageData(0, 0, downscaleWidth, downscaleHeight);
+    const data = imageData.data;
+    const redHistogram = new Array(256).fill(0);
+    const greenHistogram = new Array(256).fill(0);
+    const blueHistogram = new Array(256).fill(0);
+    for (let i = 0; i < data.length; i += 4) {
+      if ((i / 4) % 2 === 0) {
+        redHistogram[data[i]]++;
+        greenHistogram[data[i + 1]]++;
+        blueHistogram[data[i + 2]]++;
       }
     }
-    // 如果有区域超出 255，则在直方图最右侧显示 CLIPPED 标识
-    if (clipped) {
+    const histWidth = 320, histHeight = 150;
+    canvas.width = histWidth;
+    canvas.height = histHeight;
+    const sliceWidth = histWidth / 3;
+    const maxRed = Math.max(...redHistogram) || 1;
+    const maxGreen = Math.max(...greenHistogram) || 1;
+    const maxBlue = Math.max(...blueHistogram) || 1;
+    ctx.clearRect(0, 0, histWidth, histHeight);
+    for (let i = 0; i < 256; i++) {
+      const binHeightR = (redHistogram[i] / maxRed) * histHeight;
       ctx.fillStyle = 'red';
-      ctx.font = 'bold 14px sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText('CLIPPED', histWidth - 5, 2);
+      ctx.fillRect((i / 256) * sliceWidth, histHeight - binHeightR, sliceWidth / 256, binHeightR);
+      const binHeightG = (greenHistogram[i] / maxGreen) * histHeight;
+      ctx.fillStyle = 'green';
+      ctx.fillRect(sliceWidth + (i / 256) * sliceWidth, histHeight - binHeightG, sliceWidth / 256, binHeightG);
+      const binHeightB = (blueHistogram[i] / maxBlue) * histHeight;
+      ctx.fillStyle = 'blue';
+      ctx.fillRect(2 * sliceWidth + (i / 256) * sliceWidth, histHeight - binHeightB, sliceWidth / 256, binHeightB);
     }
-    ctx.restore();
-  });
+  }
 }
 
-/**
- * 根据 EV 值返回场景描述，帮助用户理解曝光情况
- */
+/****************************************************
+ * 根据 EV 值返回场景描述
+ ****************************************************/
 function getSceneDescription(effectiveEV) {
   if (effectiveEV >= 15) return 'Bright outdoor (Sunny)';
   else if (effectiveEV >= 12) return 'Outdoor overcast / bright indoor';
@@ -311,17 +271,143 @@ function App() {
   // 步骤状态：'permission'、'iso'、'meter'
   const [step, setStep] = useState('permission');
   const [stream, setStream] = useState(null);
-  // 扩展 ISO 选项
   const [iso, setIso] = useState(100);
   const [compensation, setCompensation] = useState(0);
   const [priorityMode, setPriorityMode] = useState('aperture'); // 'shutter' 或 'aperture'
-  // 新增：用户固定的光圈或快门参数
-  const [chosenAperture, setChosenAperture] = useState(2.8); // 默认光圈 f/2.8
-  const [chosenShutter, setChosenShutter] = useState(1/125); // 默认快门 1/125 sec
-  // 校准因子（内部调整，不对用户暴露），推荐初始值为 0.85
-  const [calibrationFactor] = useState(0.85);
-  // 测光模式：'center'（中央20%，高斯加权）或 'spot'（点测光：中央5%）
-  const [meteringMode, setMeteringMode] = useState('spot');
+  const [calibrationFactor, setCalibrationFactor] = useState(0.85);
+  const [meteringMode, setMeteringMode] = useState('center');
+  // 新增状态变量
+  const [smoothingFactor, setSmoothingFactor] = useState(0.1);
+  const [colorChannelMode, setColorChannelMode] = useState('combined');
+  const [filmPreset, setFilmPreset] = useState('custom');
+  const filmPresets = {
+    'Kodak Portra 400': {
+      calibrationFactor: 0.92,
+      overExposureThreshold: 250,
+      underExposureThreshold: 10,
+      recommendedCompensation: 0.3,
+      description: 'Warm tones, excellent skin rendition, slight contrast boost.',
+    },
+    'Ilford HP5': {
+      calibrationFactor: 0.85,
+      overExposureThreshold: 245,
+      underExposureThreshold: 15,
+      recommendedCompensation: 0.0,
+      description: 'Classic black & white film with moderate contrast.',
+    },
+    'Fuji Superia X-TRA 400': {
+      calibrationFactor: 0.88,
+      overExposureThreshold: 248,
+      underExposureThreshold: 12,
+      recommendedCompensation: 0.2,
+      description: 'Versatile color film delivering vibrant hues with moderate contrast.',
+    },
+    'Kodak Tri-X 400': {
+      calibrationFactor: 0.87,
+      overExposureThreshold: 240,
+      underExposureThreshold: 18,
+      recommendedCompensation: 0.0,
+      description: 'High contrast black & white film, forgiving of slight exposure errors.',
+    },
+    'Kodak Portra 160': {
+      calibrationFactor: 0.93,
+      overExposureThreshold: 255,
+      underExposureThreshold: 8,
+      recommendedCompensation: 0.2,
+      description: 'Low ISO film with fine grain and natural color reproduction.',
+    },
+    'Fujifilm Pro 400H': {
+      calibrationFactor: 0.90,
+      overExposureThreshold: 252,
+      underExposureThreshold: 10,
+      recommendedCompensation: 0.1,
+      description: 'Soft contrast and pastel tones, ideal for portrait photography.',
+    },
+    'Kodak Ektar 100': {
+      calibrationFactor: 0.95,
+      overExposureThreshold: 255,
+      underExposureThreshold: 5,
+      recommendedCompensation: 0.2,
+      description: 'Highly saturated, vivid color film with fine grain.',
+    },
+    'Fujifilm Velvia 50': {
+      calibrationFactor: 0.94,
+      overExposureThreshold: 253,
+      underExposureThreshold: 6,
+      recommendedCompensation: 0.4,
+      description: 'High contrast and vibrant color slide film, excellent for landscapes.',
+    },
+    'Fujifilm Provia 100F': {
+      calibrationFactor: 0.91,
+      overExposureThreshold: 250,
+      underExposureThreshold: 8,
+      recommendedCompensation: 0.1,
+      description: 'Slide film with natural color rendition and fine grain.',
+    },
+    'Kodak Gold 200': {
+      calibrationFactor: 0.93,
+      overExposureThreshold: 248,
+      underExposureThreshold: 12,
+      recommendedCompensation: 0.1,
+      description: 'Budget color negative film with warm tones and moderate saturation.',
+    },
+    'Ilford Delta 3200': {
+      calibrationFactor: 0.86,
+      overExposureThreshold: 240,
+      underExposureThreshold: 20,
+      recommendedCompensation: 0.0,
+      description: 'High speed black & white film, ideal for low light with distinctive grain.',
+    },
+    'AgfaPhoto Vista Plus 200': {
+      calibrationFactor: 0.92,
+      overExposureThreshold: 250,
+      underExposureThreshold: 10,
+      recommendedCompensation: 0.0,
+      description: 'Affordable color negative film with balanced contrast and color.',
+    },
+    'Cinestill 800T': {
+      calibrationFactor: 0.89,
+      overExposureThreshold: 247,
+      underExposureThreshold: 15,
+      recommendedCompensation: 0.2,
+      description: 'Tungsten-balanced film for night photography with a unique halation effect.',
+    },
+    'Lomography Color Negative 400': {
+      calibrationFactor: 0.90,
+      overExposureThreshold: 250,
+      underExposureThreshold: 10,
+      recommendedCompensation: 0.0,
+      description: 'Creative color negative film with saturated colors and soft contrast.',
+    },
+    'Fujifilm Natura 1600': {
+      calibrationFactor: 0.88,
+      overExposureThreshold: 245,
+      underExposureThreshold: 15,
+      recommendedCompensation: 0.0,
+      description: 'High speed color film with natural tones in low light conditions.',
+    },
+    'Ilford Pan F Plus 50': {
+      calibrationFactor: 0.95,
+      overExposureThreshold: 255,
+      underExposureThreshold: 5,
+      recommendedCompensation: 0.2,
+      description: 'Low ISO black & white film with extremely fine grain and high resolution.',
+    },
+    'Rollei Retro 80S': {
+      calibrationFactor: 0.90,
+      overExposureThreshold: 250,
+      underExposureThreshold: 10,
+      recommendedCompensation: 0.0,
+      description: 'High contrast black & white film known for its unique tonality.',
+    },
+    // 可根据需要进一步扩充更多胶片预设……
+  };
+  const [aeLocked, setAeLocked] = useState(false);
+  const lockedEVRef = useRef(null);
+  const [chosenAperture, setChosenAperture] = useState(2.8);
+  const [chosenShutter, setChosenShutter] = useState(1/125);
+  const [overExposureThreshold, setOverExposureThreshold] = useState(DEFAULT_OVEREXPOSURE_THRESHOLD);
+  const [underExposureThreshold, setUnderExposureThreshold] = useState(DEFAULT_UNDEREXPOSURE_THRESHOLD);
   const [exposure, setExposure] = useState({ shutterSpeed: 0, aperture: 0, effectiveEV: 0, smoothedEV: 0, evDifference: 0 });
   const [exposureWarning, setExposureWarning] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -329,12 +415,132 @@ function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const histCanvasRef = useRef(null);
-  // 用于 EV 平滑滤波（仅用于 UI 展示）
   const smoothedEVRef = useRef(null);
 
-  // 请求摄像头权限并尝试禁用自动曝光
+  function handleAutoCalibrate() {
+    if (videoRef.current && canvasRef.current) {
+      const avgBrightness = computeBrightness(videoRef.current, canvasRef.current, meteringMode);
+      if (avgBrightness > 0) {
+        const newFactor = referenceGray / avgBrightness;
+        setCalibrationFactor(parseFloat(newFactor.toFixed(2)));
+      }
+    }
+  }
+
+  function handleAeLock() {
+    if (aeLocked) {
+      setAeLocked(false);
+      lockedEVRef.current = null;
+    } else {
+      lockedEVRef.current = exposure.effectiveEV;
+      setAeLocked(true);
+    }
+  }
+
+  useEffect(() => {
+    localStorage.setItem('iso', iso);
+    localStorage.setItem('compensation', compensation);
+    localStorage.setItem('priorityMode', priorityMode);
+    localStorage.setItem('calibrationFactor', calibrationFactor);
+    localStorage.setItem('overExposureThreshold', overExposureThreshold);
+    localStorage.setItem('underExposureThreshold', underExposureThreshold);
+  }, [iso, compensation, priorityMode, calibrationFactor, overExposureThreshold, underExposureThreshold, meteringMode]);
+
+  useEffect(() => {
+    const storedIso = parseInt(localStorage.getItem('iso'), 10);
+    if (!isNaN(storedIso)) setIso(storedIso);
+    const storedCompensation = parseFloat(localStorage.getItem('compensation'));
+    if (!isNaN(storedCompensation)) setCompensation(storedCompensation);
+    const storedPriority = localStorage.getItem('priorityMode');
+    if (storedPriority) setPriorityMode(storedPriority);
+    const storedCalibration = parseFloat(localStorage.getItem('calibrationFactor'));
+    if (!isNaN(storedCalibration)) setCalibrationFactor(storedCalibration);
+    const storedOver = parseInt(localStorage.getItem('overExposureThreshold'), 10);
+    if (!isNaN(storedOver)) setOverExposureThreshold(storedOver);
+    const storedUnder = parseInt(localStorage.getItem('underExposureThreshold'), 10);
+    if (!isNaN(storedUnder)) setUnderExposureThreshold(storedUnder);
+  }, []);
+
+  useEffect(() => {
+    if (step === 'meter' && videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play();
+      const intervalId = setInterval(() => {
+        try {
+          if (
+            videoRef.current &&
+            canvasRef.current &&
+            histCanvasRef.current &&
+            videoRef.current.videoWidth > 0 &&
+            videoRef.current.videoHeight > 0 &&
+            videoRef.current.readyState === 4 &&
+            !videoRef.current.paused
+          ) {
+            const avgBrightness = computeBrightness(videoRef.current, canvasRef.current, meteringMode);
+            if (avgBrightness < 5) {
+              setError('Extremely dark, increase ISO/aperture.');
+            } else if (avgBrightness > 250) {
+              setError('Extremely bright! Reduce ISO or aperture.');
+            } else {
+              setError('');
+              let exp;
+              if (priorityMode === 'aperture') {
+                exp = calculateExposureAperturePriority(avgBrightness, iso, compensation, chosenAperture, calibrationFactor);
+              } else {
+                exp = calculateExposureShutterPriority(avgBrightness, iso, compensation, chosenShutter, calibrationFactor);
+              }
+              let currentEV = exp.effectiveEV;
+              if (smoothedEVRef.current === null) {
+                smoothedEVRef.current = currentEV;
+              } else {
+                smoothedEVRef.current = smoothedEVRef.current * (1 - smoothingFactor) + currentEV * smoothingFactor;
+              }
+              exp.smoothedEV = smoothedEVRef.current;
+              // AE-Lock：如果已锁定，则使用锁定的 EV
+              if (aeLocked && lockedEVRef.current !== null) {
+                exp.effectiveEV = lockedEVRef.current;
+              }
+              setExposure(exp);
+              if (exp.evDifference <= -1) {
+                setExposureWarning('Severely underexposed, increase aperture or ISO significantly.');
+              } else if (exp.evDifference <= -0.6) {
+                setExposureWarning('Moderately underexposed, consider increasing aperture or ISO.');
+              } else if (exp.evDifference <= -0.3) {
+                setExposureWarning('Slightly underexposed, fine-tune settings.');
+              } else if (exp.evDifference >= 1) {
+                setExposureWarning('Severely overexposed, reduce aperture or ISO significantly.');
+              } else if (exp.evDifference >= 0.6) {
+                setExposureWarning('Moderately overexposed, consider reducing aperture or ISO.');
+              } else if (exp.evDifference >= 0.3) {
+                setExposureWarning('Slightly overexposed, fine-tune settings.');
+              } else {
+                setExposureWarning('');
+              }
+            }
+            drawHistogram(videoRef.current, histCanvasRef.current, compensation, underExposureThreshold, overExposureThreshold, colorChannelMode);
+          }
+        } catch (e) {
+          console.error(e);
+          setError('Measurement error');
+        }
+      }, 100);
+      return () => clearInterval(intervalId);
+    }
+  }, [step, stream, iso, compensation, priorityMode, calibrationFactor, underExposureThreshold, overExposureThreshold, chosenAperture, chosenShutter, smoothingFactor, colorChannelMode, aeLocked, meteringMode]);
+
+  useEffect(() => {
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [stream]);
+
   const requestCamera = async () => {
     setIsLoading(true);
+    if (/iPhone/.test(navigator.userAgent)) {
+      alert('iPhone camera may use auto-exposure. For best results, use manual compensation or calibration.');
+    }
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -355,7 +561,6 @@ function App() {
         console.error('Exposure constraint error:', err);
       }
       setStream(mediaStream);
-      // 直接进入 ISO 设置环节
       setStep('iso');
     } catch (err) {
       console.error('Camera access error:', err);
@@ -365,97 +570,6 @@ function App() {
     }
   };
 
-  // 存储设置到 localStorage（ISO、曝光补偿和优先模式）
-  useEffect(() => {
-    localStorage.setItem('iso', iso);
-    localStorage.setItem('compensation', compensation);
-    localStorage.setItem('priorityMode', priorityMode);
-  }, [iso, compensation, priorityMode]);
-
-  // 启动时恢复设置
-  useEffect(() => {
-    const storedIso = parseInt(localStorage.getItem('iso'), 10);
-    if (!isNaN(storedIso)) setIso(storedIso);
-    const storedCompensation = parseFloat(localStorage.getItem('compensation'));
-    if (!isNaN(storedCompensation)) setCompensation(storedCompensation);
-    const storedPriority = localStorage.getItem('priorityMode');
-    if (storedPriority) setPriorityMode(storedPriority);
-  }, []);
-
-  // 摄像头预览及周期性测光
-  useEffect(() => {
-    if (step === 'meter' && videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play();
-      const intervalId = setInterval(() => {
-        try {
-          if (
-            videoRef.current &&
-            canvasRef.current &&
-            histCanvasRef.current &&
-            videoRef.current.videoWidth > 0 &&
-            videoRef.current.videoHeight > 0 &&
-            videoRef.current.readyState === 4 &&
-            !videoRef.current.paused
-          ) {
-            const avgBrightness = computeBrightness(
-              videoRef.current,
-              canvasRef.current,
-              meteringMode
-            );
-            // 异常场景处理
-            if (avgBrightness < 5) {
-              setError('Scene too dark: Use manual adjustments or increase ISO.');
-            } else if (avgBrightness > 250) {
-              setError('Scene too bright: Consider reducing ISO or adjusting aperture.');
-            } else {
-              setError('');
-              // 根据优先模式调用对应的曝光计算函数
-              let exp;
-              if (priorityMode === 'aperture') {
-                exp = calculateExposureAperturePriority(avgBrightness, iso, compensation, chosenAperture, calibrationFactor);
-              } else {
-                exp = calculateExposureShutterPriority(avgBrightness, iso, compensation, chosenShutter, calibrationFactor);
-              }
-              // EV 平滑滤波（仅用于 UI 显示）
-              let currentEV = exp.effectiveEV;
-              if (smoothedEVRef.current === null) {
-                smoothedEVRef.current = currentEV;
-              } else {
-                const smoothingFactor = 0.1;
-                smoothedEVRef.current =
-                  smoothedEVRef.current * (1 - smoothingFactor) + currentEV * smoothingFactor;
-              }
-              exp.smoothedEV = smoothedEVRef.current;
-              setExposure(exp);
-              // 边界检查：若推荐曝光与测光 EV 差值大于 1 EV，给出警告
-              if (Math.abs(exp.evDifference) > 1) {
-                setExposureWarning('Exposure out of range! Consider adjusting aperture or ISO.');
-              } else {
-                setExposureWarning('');
-              }
-            }
-            drawHistogram(videoRef.current, histCanvasRef.current, compensation);
-          }
-        } catch (e) {
-          console.error(e);
-          setError('Measurement error');
-        }
-      }, 500);
-      return () => clearInterval(intervalId);
-    }
-  }, [step, stream, iso, compensation, priorityMode, calibrationFactor, meteringMode, chosenAperture, chosenShutter]);
-
-  // 组件卸载时停止摄像头流
-  useEffect(() => {
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, [stream]);
-
-  // Step 1: 请求摄像头权限
   if (step === 'permission') {
     return (
       <div className="container">
@@ -469,59 +583,39 @@ function App() {
     );
   }
 
-  // Step 2: 选择 ISO、曝光补偿、优先模式及固定的光圈/快门值，同时选择测光模式
   if (step === 'iso') {
     return (
       <div className="container">
         <DocumentMetadata />
-        <h1 className="title">Set ISO, Exposure Compensation, Priority &amp; Metering Mode</h1>
-        <p className="note">Note: Light metering is based on the assumption of a standard 18% gray card (calibration factor = 0.85).</p>
+        <h1 className="title">Set ISO, Exposure Compensation, Priority & Metering Mode</h1>
+        <p className="note">Note: Light metering is based on a standard 18% gray card (calibration factor adjustable).</p>
         <div className="input-group">
           <label>
             ISO:
             <select value={iso} onChange={(e) => setIso(parseInt(e.target.value))} className="select">
-              <option value="64">ISO 64</option>
-              <option value="100">ISO 100</option>
-              <option value="125">ISO 125</option>
-              <option value="160">ISO 160</option>
-              <option value="200">ISO 200</option>
-              <option value="250">ISO 250</option>
-              <option value="320">ISO 320</option>
-              <option value="400">ISO 400</option>
-              <option value="500">ISO 500</option>
-              <option value="800">ISO 800</option>
-              <option value="1000">ISO 1000</option>
-              <option value="1600">ISO 1600</option>
-              <option value="3200">ISO 3200</option>
+              {isoValues.map(value => (<option key={value} value={value}>ISO {value}</option>))}
             </select>
           </label>
         </div>
         <div className="input-group">
           <label>
             Exposure Compensation:
-            <select
-              value={compensation}
-              onChange={(e) => setCompensation(parseFloat(e.target.value))}
-              className="select"
-            >
-              <option value="-3">-3 EV</option>
-              <option value="-2">-2 EV</option>
-              <option value="-1">-1 EV</option>
-              <option value="0">0 EV</option>
-              <option value="1">+1 EV</option>
-              <option value="2">+2 EV</option>
-              <option value="3">+3 EV</option>
+            <select value={compensation} onChange={(e) => setCompensation(parseFloat(e.target.value))} className="select">
+              {compensationSteps.map(stepValue => (<option key={stepValue} value={stepValue}>{stepValue} EV</option>))}
             </select>
           </label>
         </div>
         <div className="input-group">
           <label>
+            Calibration Factor:
+            <input type="number" value={calibrationFactor} onChange={(e) => setCalibrationFactor(parseFloat(e.target.value))} step={0.01} min={0.5} max={1.5} />
+          </label>
+          <button onClick={handleAutoCalibrate} className="btn small">Auto Calibrate Gray Card</button>
+        </div>
+        <div className="input-group">
+          <label>
             Priority Mode:
-            <select
-              value={priorityMode}
-              onChange={(e) => setPriorityMode(e.target.value)}
-              className="select"
-            >
+            <select value={priorityMode} onChange={(e) => setPriorityMode(e.target.value)} className="select">
               <option value="shutter">Shutter Priority</option>
               <option value="aperture">Aperture Priority</option>
             </select>
@@ -564,36 +658,88 @@ function App() {
         <div className="input-group">
           <label>
             Metering Mode:
-            <select
-              value={meteringMode}
-              onChange={(e) => setMeteringMode(e.target.value)}
-              className="select"
-            >
+            <select value={meteringMode} onChange={(e) => setMeteringMode(e.target.value)} className="select">
               <option value="center">Center Weighted (Central 20%, Gaussian Weighting)</option>
-              <option value="spot">Spot Meter (Central 5% area)</option>
+              <option value="spot">Spot Meter (Central 3% area)</option>
             </select>
           </label>
         </div>
-        <button onClick={() => setStep('meter')} className="btn">
-          Confirm &amp; Start Metering
-        </button>
+        <div className="input-group">
+          <label>
+            Color Channel Mode:
+            <select value={colorChannelMode} onChange={(e) => setColorChannelMode(e.target.value)} className="select">
+              <option value="combined">Combined</option>
+              <option value="separate">Separate</option>
+            </select>
+          </label>
+        </div>
+        <div className="input-group">
+          <label>
+            Film Preset:
+            <select
+              value={filmPreset}
+              onChange={(e) => {
+                setFilmPreset(e.target.value);
+                if (e.target.value !== 'custom') {
+                  const preset = filmPresets[e.target.value];
+                  setCalibrationFactor(preset.calibrationFactor);
+                  setOverExposureThreshold(preset.overExposureThreshold);
+                  setUnderExposureThreshold(preset.underExposureThreshold);
+                  setCompensation(preset.recommendedCompensation);
+                }
+              }}
+              className="select"
+            >
+              <option value="custom">Custom</option>
+              <option value="Kodak Portra 400">Kodak Portra 400</option>
+              <option value="Ilford HP5">Ilford HP5</option>
+              <option value="Fuji Superia X-TRA 400">Fuji Superia X-TRA 400</option>
+              <option value="Kodak Tri-X 400">Kodak Tri-X 400</option>
+              <option value="Kodak Portra 160">Kodak Portra 160</option>
+              <option value="Fujifilm Pro 400H">Fujifilm Pro 400H</option>
+              <option value="Kodak Ektar 100">Kodak Ektar 100</option>
+              <option value="Fujifilm Velvia 50">Fujifilm Velvia 50</option>
+              <option value="Fujifilm Provia 100F">Fujifilm Provia 100F</option>
+              <option value="Kodak Gold 200">Kodak Gold 200</option>
+              <option value="Ilford Delta 3200">Ilford Delta 3200</option>
+              <option value="AgfaPhoto Vista Plus 200">AgfaPhoto Vista Plus 200</option>
+              <option value="Cinestill 800T">Cinestill 800T</option>
+              <option value="Lomography Color Negative 400">Lomography Color Negative 400</option>
+              <option value="Fujifilm Natura 1600">Fujifilm Natura 1600</option>
+              <option value="Ilford Pan F Plus 50">Ilford Pan F Plus 50</option>
+              <option value="Rollei Retro 80S">Rollei Retro 80S</option>
+            </select>
+          </label>
+        </div>
+        <div className="input-group">
+          <label>
+            EV Smoothing Factor:
+            <input type="number" value={smoothingFactor} onChange={(e) => setSmoothingFactor(parseFloat(e.target.value))} step={0.01} min={0.05} max={0.3} />
+          </label>
+        </div>
+        <div className="input-group">
+          <label>
+            Over Exposure Threshold:
+            <input type="number" value={overExposureThreshold} onChange={(e) => setOverExposureThreshold(parseInt(e.target.value))} />
+          </label>
+        </div>
+        <div className="input-group">
+          <label>
+            Under Exposure Threshold:
+            <input type="number" value={underExposureThreshold} onChange={(e) => setUnderExposureThreshold(parseInt(e.target.value))} />
+          </label>
+        </div>
+        <button onClick={() => setStep('meter')} className="btn">Confirm & Start Metering</button>
       </div>
     );
   }
 
-  // Step 3: 测光页面 – 显示摄像头预览、曝光信息、直方图及场景描述
   if (step === 'meter') {
     const evDifference = Math.abs(exposure.smoothedEV - exposure.effectiveEV);
     let exposureWarningColor = 'green';
-    if (evDifference >= 2) {
-      exposureWarningColor = 'red';
-    } else if (evDifference >= 1) {
-      exposureWarningColor = 'orange';
-    }
-  
-    // 根据测光模式，决定测光范围大小
-    const circleSize = meteringMode === 'spot' ? '5%' : '20%';
-  
+    if (evDifference >= 0.6) exposureWarningColor = 'red';
+    else if (evDifference >= 0.3) exposureWarningColor = 'orange';
+    const circleSize = meteringMode === 'spot' ? '3%' : '20%';
     return (
       <>
         <GoogleAnalytics trackingId="G-1ZZ5X14QXX" />
@@ -601,82 +747,47 @@ function App() {
         <div className="meter-container">
           <DocumentMetadata />
           <header className="meter-header">
-            <button onClick={() => setStep('iso')} className="btn small">
-              Back
-            </button>
+            <button onClick={() => setStep('iso')} className="btn small">Back</button>
+            <button onClick={handleAeLock} className="btn small">{aeLocked ? 'Unlock AE' : 'AE Lock'}</button>
             <h1 className="header-title">Measuring Exposure</h1>
             <div></div>
           </header>
           <main className="meter-main">
-  
-            {/* 
-              1) 这里给视频和测光圈都包裹到一个带有 "video-container" 类名的 div 中 
-              2) 后面在 CSS 里给 .video-container 设置 position: relative 
-            */}
             <div className="video-container">
               <video ref={videoRef} className="video-preview" playsInline muted />
-              <div
-                className="metering-area"
-                style={{
-                  width: circleSize,
-                  height: circleSize
-                }}
-              />
+              <div className="metering-area" style={{ width: circleSize, height: circleSize }} />
             </div>
-  
             <canvas ref={histCanvasRef} className="histogram-canvas" />
             <canvas ref={canvasRef} className="hidden-canvas" />
-  
             <div className="exposure-info">
               {error ? (
-                <p className="error-message">{error}</p>
+                <div className="error-message">
+                  <p>{error}</p>
+                  <button onClick={() => setStep('iso')}>Adjust Settings</button>
+                </div>
               ) : (
                 <>
                   <p>
                     {priorityMode === 'shutter'
-                      ? `Chosen Shutter: ${
-                          exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
-                            ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
-                            : `${exposure.shutterSpeed
-                                .toFixed(1)
-                                .replace(/\.0$/, '')} sec`
-                        }`
+                      ? `Chosen Shutter: ${exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1 ? `1/${Math.round(1 / exposure.shutterSpeed)} sec` : `${exposure.shutterSpeed.toFixed(1).replace(/\\.0$/, '')} sec`}`
                       : `Chosen Aperture: f/${exposure.aperture}`}
                   </p>
                   <p>
-                    Recommended {priorityMode === 'shutter' ? 'Aperture' : 'Shutter Speed'}:{' '}
-                    {priorityMode === 'shutter'
-                      ? exposure.aperture
-                        ? `f/${
-                            exposure.aperture % 1 === 0
-                              ? exposure.aperture.toFixed(0)
-                              : exposure.aperture.toFixed(1)
-                          }`
-                        : '--'
-                      : exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1
-                      ? `1/${Math.round(1 / exposure.shutterSpeed)} sec`
-                      : `${exposure.shutterSpeed
-                          .toFixed(1)
-                          .replace(/\.0$/, '')} sec`}
+                    Recommended {priorityMode === 'shutter' ? 'Aperture' : 'Shutter Speed'}: {priorityMode === 'shutter'
+                      ? (exposure.aperture ? `f/${exposure.aperture % 1 === 0 ? exposure.aperture.toFixed(0) : exposure.aperture.toFixed(1)}` : '--')
+                      : (exposure.shutterSpeed > 0 && exposure.shutterSpeed < 1 ? `1/${Math.round(1 / exposure.shutterSpeed)} sec` : `${exposure.shutterSpeed.toFixed(1).replace(/\\.0$/, '')} sec`)}
                   </p>
                   <p style={{ color: exposureWarningColor }}>
-                    Current EV:{' '}
-                    {Number.isFinite(exposure.smoothedEV)
-                      ? exposure.smoothedEV.toFixed(1)
-                      : 'N/A'}
+                    Current EV: {Number.isFinite(exposure.smoothedEV) ? exposure.smoothedEV.toFixed(1) : 'N/A'}
                   </p>
                   <p>Scene: {getSceneDescription(exposure.smoothedEV)}</p>
                   <p className="note">
-                    (Using{' '}
-                    {meteringMode === 'center'
+                    (Using {meteringMode === 'center'
                       ? 'center-weighted (Central 20%, Gaussian Weighting)'
-                      : 'spot (Central 5% area)'}{' '}
-                    metering, ISO = {iso}, EV Compensation = {compensation}, Priority Mode ={' '}
-                    {priorityMode}, Calibration Factor = {calibrationFactor})
+                      : 'spot (Central 3% area)'} metering, ISO = {iso}, EV Compensation = {compensation}, Priority Mode = {priorityMode}, Calibration Factor = {calibrationFactor})
                   </p>
                   <p className="note">
-                    EV formula: EV = {referenceEV} + log₂((Brightness × {calibrationFactor})/
-                    {referenceGray}) + log₂(ISO/100)
+                    EV formula: EV = {referenceEV} + log₂((Brightness × {calibrationFactor})/{referenceGray}) + log₂(ISO/100)
                   </p>
                   <p>Exposure difference: {Math.abs(exposure.evDifference).toFixed(1)} EV</p>
                   {exposureWarning && <p className="warning">{exposureWarning}</p>}
@@ -685,7 +796,7 @@ function App() {
             </div>
           </main>
           <footer className="app-footer">
-          <p>© {new Date().getFullYear()} Film Camera Light Meter. tokugai.com All rights reserved.</p>
+            <p>© {new Date().getFullYear()} Film Camera Light Meter. tokugai.com All rights reserved.</p>
           </footer>
         </div>
       </>
@@ -694,7 +805,6 @@ function App() {
   return null;
 }
 
-// 错误边界组件
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
